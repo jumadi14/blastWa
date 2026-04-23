@@ -1,0 +1,9 @@
+{
+  "ignore": [
+    "temp_sessions/*",
+    "tokens/*",
+    "sessions/*",
+    "*.log"
+  ],
+  "delay": "2500"
+}

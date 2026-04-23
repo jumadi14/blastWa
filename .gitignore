@@ -1,0 +1,23 @@
+# Dependency
+node_modules/
+
+# WhatsApp Sessions (Sangat Rahasia)
+temp_sessions/
+tokens/
+tokensjj/
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Database & Config
+database.db
+.env
+*.txt
+*.log
+
+# User Uploads (Kosongkan isinya tapi jangan hapus foldernya)
+uploads/*
+!uploads/.gitkeep
+
+# Temporary/Backup
+models/db (Salin).js
+node_modulessd/
