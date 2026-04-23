@@ -175,11 +175,16 @@ export async function createSession(deviceId) {
     const client = new Client({
         authStrategy: new pkg.LocalAuth({ 
             clientId: deviceId,
-            dataPath: path.join(process.cwd(), "temp_sessions") // Folder sementara
+            dataPath: path.join(process.cwd(), "temp_sessions")
         }),
         puppeteer: {
-            headless: "new",
-            args: ["--no-sandbox", "--disable-setuid-sandbox"]
+            // JANGAN masukkan executablePath di sini, biarkan Docker yang cari otomatis
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu'
+            ],
         }
     });
 
