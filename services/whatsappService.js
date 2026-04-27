@@ -175,19 +175,21 @@ export async function createSession(deviceId) {
 
     // 2. Setup Client dengan LocalAuth (Tapi folder ini nanti jadi temporary saja)
     const client = new Client({
-  authStrategy: new pkg.LocalAuth({ 
-    clientId: deviceId,
-    dataPath: path.join(process.cwd(), "temp_sessions")
-  }),
-  puppeteer: {
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage'
-    ],
-  }
-});
+        authStrategy: new pkg.LocalAuth({ 
+            clientId: deviceId,
+            dataPath: path.join(process.cwd(), "temp_sessions")
+        }),
+        puppeteer: {
+            // JANGAN masukkan executablePath di sini, biarkan Docker yang cari otomatis
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu'
+
+            ],
+        }
+    });
 
     // Event: QR Code
     client.on("qr", (qr) => {
