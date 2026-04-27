@@ -180,14 +180,14 @@ export async function createSession(deviceId) {
             dataPath: path.join(process.cwd(), "temp_sessions")
         }),
         puppeteer: {
-            // JANGAN masukkan executablePath di sini, biarkan Docker yang cari otomatis
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--single-process'
-            ],
+  // Lokasi Chrome hasil script render-build.sh
+  executablePath: '/opt/render/project/.render/chrome/opt/google/chrome/google-chrome',
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage'
+  ],
+
         }
     });
 
