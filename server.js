@@ -24,7 +24,8 @@ dotenv.config();
 
 // === Initialize App & Server ===
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
+const HOST = "0.0.0.0";
 
 // === Middleware ===
 app.use(cors());
@@ -65,8 +66,8 @@ const io = new IOServer(server, {
 setSocketIO(io);
 
 // === Jalankan Server ===
-server.listen(PORT, async () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
+server.listen(PORT, HOST, async () => {
+  console.log(`✅ Server running on http://${HOST}:${PORT}`);
   console.log(`✅ Socket.IO running`);
 
   try {
