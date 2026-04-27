@@ -180,7 +180,10 @@ export async function createSession(deviceId) {
             dataPath: path.join(process.cwd(), "temp_sessions")
         }),
         puppeteer: {
-            // JANGAN masukkan executablePath di sini, biarkan Docker yang cari otomatis
+            // Gunakan PUPPETEER_EXECUTABLE_PATH bila tersedia (mis. Chromium dari Nix di Replit).
+            ...(process.env.PUPPETEER_EXECUTABLE_PATH
+                ? { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH }
+                : {}),
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',

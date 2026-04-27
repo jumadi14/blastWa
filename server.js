@@ -24,7 +24,7 @@ dotenv.config();
 
 // === Initialize App & Server ===
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = 5000;
 const HOST = "0.0.0.0";
 
 // === Middleware ===
