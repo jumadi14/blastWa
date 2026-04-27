@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "postinstall": "npx puppeteer install"
   },
   "dependencies": {
     "axios": "^1.7.4",
@@ -31,4 +32,6 @@
   "devDependencies": {
     "nodemon": "^3.1.0"
   }
+ 
+
 }
