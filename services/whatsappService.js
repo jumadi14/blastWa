@@ -175,21 +175,19 @@ export async function createSession(deviceId) {
 
     // 2. Setup Client dengan LocalAuth (Tapi folder ini nanti jadi temporary saja)
     const client = new Client({
-        authStrategy: new pkg.LocalAuth({ 
-            clientId: deviceId,
-            dataPath: path.join(process.cwd(), "temp_sessions")
-        }),
-        puppeteer: {
-  // Lokasi Chrome hasil script render-build.sh
-  executablePath: '/opt/render/project/.render/chrome/opt/google/chrome/google-chrome',
-  args: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage'
-  ],
-
-        }
-    });
+  authStrategy: new pkg.LocalAuth({ 
+    clientId: deviceId,
+    dataPath: path.join(process.cwd(), "temp_sessions")
+  }),
+  puppeteer: {
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage'
+    ],
+  }
+});
 
     // Event: QR Code
     client.on("qr", (qr) => {
