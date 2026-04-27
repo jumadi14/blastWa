@@ -159,17 +159,19 @@ export async function createSession(deviceId) {
         const existingDevice = await db.get(`SELECT deviceId FROM Devices WHERE deviceId = ?`, [deviceId]);
         if (!existingDevice) {
             await db.run(
-        `INSERT INTO Devices (deviceId, status, createdAt) 
-         VALUES (?, ?, ?) 
-         ON DUPLICATE KEY UPDATE status = VALUES(status)`,
-        [deviceId, "initializing", Math.floor(Date.now() / 1000)]
-    );
+            `INSERT INTO Devices (deviceId, status, createdAt) 
+             VALUES (?, ?, ?) 
+             ON DUPLICATE KEY UPDATE status = VALUES(status)`, 
+            [deviceId, "initializing", Math.floor(Date.now() / 1000)]
+        );
+
         } else {
             await updateDeviceStatus(deviceId, "initializing");
         }
     } catch (err) {
         console.error(`[DB ERROR] Setup device gagal:`, err.message);
     }
+
 
     // 2. Setup Client dengan LocalAuth (Tapi folder ini nanti jadi temporary saja)
     const client = new Client({
@@ -183,7 +185,8 @@ export async function createSession(deviceId) {
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-gpu'
+                '--disable-gpu',
+                '--single-process'
             ],
         }
     });
@@ -208,6 +211,20 @@ export async function createSession(deviceId) {
         console.log(`✅ ${deviceId} DEVICE READY`);
         await updateDeviceStatus(deviceId, "READY", client.info.wid.user);
     });
+    // Event: Pesan masuk (PRIVATE)
+    client.on("message", async (message) => {
+        if (
+            message.from.endsWith("@g.us") ||
+            message.from.endsWith("@broadcast") ||
+            message.isStatus ||
+            message.from.endsWith("@newsletter") ||
+            message.fromMe
+        ) {
+            return;
+        }
+        await saveInboxMessage(deviceId, message);
+    });
+
 
     // Event: Disconnected
     client.on("disconnected", async (reason) => {
@@ -291,8 +308,14 @@ export async function sendMessageService(deviceId, number, message, imagePath = 
 
       console.log(`🖼️ Mengirim gambar: ${absolutePath} as ${mimeType}`);
       response = await client.sendMessage(formatted, media, { caption: message });
-    }
+    
 
+} else { 
+      // ✅ <--- TAMBAHKAN BLOK ELSE INI PAK BOS
+      // Kalau tidak ada gambar, maka kirim teks murni
+      console.log(`💬 Mengirim pesan teks murni ke: ${formatted}`);
+      response = await client.sendMessage(formatted, message);
+    }
     // Update status ke SENT
     await db.run(
       `UPDATE Messages SET status = ?, messageId = ? WHERE messageId = ?`,
