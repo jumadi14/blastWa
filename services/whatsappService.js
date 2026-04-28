@@ -12,7 +12,6 @@ import db from "../models/db.js";
 // Simpan QR Code sementara
 const qrCodes = new Map();
 
-
 // Simpan client aktif
 const clients = new Map();
 
@@ -37,19 +36,22 @@ export function getWAChatClient(deviceId) {
 
 // Fungsi untuk mengambil session dari DB
 async function getSessionFromDB(deviceId) {
-    const row = await db.get(`SELECT session_data FROM whatsapp_sessions WHERE device_id = ?`, [deviceId]);
-    return row ? JSON.parse(row.session_data) : null;
+  const row = await db.get(
+    `SELECT session_data FROM whatsapp_sessions WHERE device_id = ?`,
+    [deviceId],
+  );
+  return row ? JSON.parse(row.session_data) : null;
 }
 
 // Fungsi untuk simpan/update session ke DB
 async function saveSessionToDB(deviceId, sessionData) {
-    const dataString = JSON.stringify(sessionData);
-    await db.run(
-        `INSERT INTO whatsapp_sessions (device_id, session_data) 
+  const dataString = JSON.stringify(sessionData);
+  await db.run(
+    `INSERT INTO whatsapp_sessions (device_id, session_data) 
          VALUES (?, ?) 
          ON DUPLICATE KEY UPDATE session_data = VALUES(session_data), updated_at = CURRENT_TIMESTAMP`,
-        [deviceId, dataString]
-    );
+    [deviceId, dataString],
+  );
 }
 
 // ======================================================
@@ -61,16 +63,27 @@ async function updateDeviceStatus(deviceId, newStatus, phoneNumber = null) {
     if (numberToUpdate) {
       await db.run(
         `UPDATE Devices SET status = ?, phoneNumber = ? WHERE deviceId = ?`,
-        [newStatus, numberToUpdate, deviceId]
+        [newStatus, numberToUpdate, deviceId],
       );
     } else {
-      await db.run(`UPDATE Devices SET status = ? WHERE deviceId = ?`, [newStatus, deviceId]);
+      await db.run(`UPDATE Devices SET status = ? WHERE deviceId = ?`, [
+        newStatus,
+        deviceId,
+      ]);
     }
 
     console.log(`[DB SUCCESS] Status device ${deviceId} → ${newStatus}`);
-    if (io) io.emit("device-status", { deviceId, status: newStatus, phoneNumber: numberToUpdate });
+    if (io)
+      io.emit("device-status", {
+        deviceId,
+        status: newStatus,
+        phoneNumber: numberToUpdate,
+      });
   } catch (err) {
-    console.error(`[DB ERROR] Gagal update status device ${deviceId}:`, err.message);
+    console.error(
+      `[DB ERROR] Gagal update status device ${deviceId}:`,
+      err.message,
+    );
   }
 }
 
@@ -81,29 +94,29 @@ async function saveInboxMessage(deviceId, message) {
   try {
     // 1. Ambil kontak secara paksa dari library
     const contact = await message.getContact();
-    
+
     // 2. Logika pencarian nomor (Cari dari yang paling akurat)
-    let finalNumber = '';
+    let finalNumber = "";
 
     if (contact.number) {
       // Prioritas 1: Nomor HP asli dari objek kontak
       finalNumber = contact.number;
     } else if (message.author) {
       // Prioritas 2: Author (biasanya muncul di grup atau enkripsi baru)
-      finalNumber = message.author.split('@')[0].split(':')[0];
+      finalNumber = message.author.split("@")[0].split(":")[0];
     } else {
       // Prioritas 3: Ambil dari ID remote, tapi bersihkan karakternya
-      finalNumber = message.from.split('@')[0].split(':')[0];
+      finalNumber = message.from.split("@")[0].split(":")[0];
     }
 
     // Bersihkan dari semua karakter non-angka (biar sisa 628xxx saja)
-    finalNumber = finalNumber.replace(/\D/g, '');
+    finalNumber = finalNumber.replace(/\D/g, "");
 
-    // 3. JAGA-JAGA: Kalau nomor tetap ID panjang (LID), 
+    // 3. JAGA-JAGA: Kalau nomor tetap ID panjang (LID),
     // kita tambahkan Nama di depannya supaya kamu kenal
     const senderName = message._data.notifyName || "";
     let displayInDb = finalNumber;
-    
+
     if (finalNumber.length > 15 && senderName) {
       displayInDb = `${senderName} (${finalNumber.substring(0, 5)}...)`;
     }
@@ -111,12 +124,7 @@ async function saveInboxMessage(deviceId, message) {
     await db.run(
       `INSERT INTO Inbox (deviceId, fromNumber, body, timestamp, isRead)
        VALUES (?, ?, ?, ?, 0)`,
-      [
-        deviceId, 
-        displayInDb, 
-        message.body, 
-        Math.floor(Date.now() / 1000)
-      ]
+      [deviceId, displayInDb, message.body, Math.floor(Date.now() / 1000)],
     );
 
     console.log(`[DB SUCCESS] Masuk dari: ${displayInDb}`);
@@ -136,116 +144,120 @@ async function saveOutboxMessage(deviceId, toNumber, body, status, msgId) {
          status = VALUES(status),
          messageId = VALUES(messageId),
          timestamp = VALUES(timestamp)`,
-      [deviceId, toNumber, body, timestamp, status, msgId]
+      [deviceId, toNumber, body, timestamp, status, msgId],
     );
     // Log ini hanya muncul kalau baris di atas BENAR-BENAR sukses
     console.log(`[DB SUCCESS] Outbox ke ${toNumber} berhasil.`);
   } catch (err) {
-    // Kalau muncul "Duplicate entry" di sini, berarti index UNIQUE di tabelmu 
+    // Kalau muncul "Duplicate entry" di sini, berarti index UNIQUE di tabelmu
     // ada yang bentrok dengan nilai baru yang kamu masukkan.
-    console.error(`❌ DB Error: Gagal simpan pesan keluar di tabel Messages:`, err.message);
+    console.error(
+      `❌ DB Error: Gagal simpan pesan keluar di tabel Messages:`,
+      err.message,
+    );
   }
 }
-
 
 // ======================================================
 // ⚙️ SESSION MANAGEMENT (DB VERSION)
 // ======================================================
 export async function createSession(deviceId) {
-    console.log(`🚀 Menginisialisasi session via Database: ${deviceId}`);
+  console.log(`🚀 Menginisialisasi session via Database: ${deviceId}`);
 
-    // 1. Pastikan Device terdaftar di tabel Devices
-    try {
-        const existingDevice = await db.get(`SELECT deviceId FROM Devices WHERE deviceId = ?`, [deviceId]);
-        if (!existingDevice) {
-            await db.run(
-            `INSERT INTO Devices (deviceId, status, createdAt) 
+  // 1. Pastikan Device terdaftar di tabel Devices
+  try {
+    const existingDevice = await db.get(
+      `SELECT deviceId FROM Devices WHERE deviceId = ?`,
+      [deviceId],
+    );
+    if (!existingDevice) {
+      await db.run(
+        `INSERT INTO Devices (deviceId, status, createdAt) 
              VALUES (?, ?, ?) 
-             ON DUPLICATE KEY UPDATE status = VALUES(status)`, 
-            [deviceId, "initializing", Math.floor(Date.now() / 1000)]
-        );
-
-        } else {
-            await updateDeviceStatus(deviceId, "initializing");
-        }
-    } catch (err) {
-        console.error(`[DB ERROR] Setup device gagal:`, err.message);
+             ON DUPLICATE KEY UPDATE status = VALUES(status)`,
+        [deviceId, "initializing", Math.floor(Date.now() / 1000)],
+      );
+    } else {
+      await updateDeviceStatus(deviceId, "initializing");
     }
+  } catch (err) {
+    console.error(`[DB ERROR] Setup device gagal:`, err.message);
+  }
 
+  // 2. Setup Client dengan LocalAuth (Tapi folder ini nanti jadi temporary saja)
+  const client = new Client({
+    authStrategy: new pkg.LocalAuth({
+      clientId: deviceId,
+      dataPath: path.join(process.cwd(), "temp_sessions"),
+    }),
+    puppeteer: {
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-accelerated-2d-canvas",
+        "--no-first-run",
+        "--no-zygote",
+        "--single-process", // Penting di Replit
+        "--disable-gpu",
+      ],
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
+    },
+  });
 
-    // 2. Setup Client dengan LocalAuth (Tapi folder ini nanti jadi temporary saja)
-    const client = new Client({
-        authStrategy: new pkg.LocalAuth({ 
-            clientId: deviceId,
-            dataPath: path.join(process.cwd(), "temp_sessions")
-        }),
-        puppeteer: {
-            // Gunakan PUPPETEER_EXECUTABLE_PATH bila tersedia (mis. Chromium dari Nix di Replit).
-            ...(process.env.PUPPETEER_EXECUTABLE_PATH
-                ? { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH }
-                : {}),
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu'
+  // Event: QR Code
+  client.on("qr", (qr) => {
+    console.log(`[QR] Silakan scan QR untuk device: ${deviceId}`);
+    qrcode.generate(qr, { small: true });
+    updateDeviceStatus(deviceId, "QR");
+    if (io) io.emit("qr-code", { deviceId, qr });
+  });
 
-            ],
-        }
-    });
+  // Event: Authenticated (PENTING! Di sini kita ambil datanya buat simpan ke DB)
+  client.on("authenticated", async () => {
+    console.log(`✅ ${deviceId} AUTHENTICATED`);
+    // Catatan: whatsapp-web.js LocalAuth menangani file secara internal.
+    // Untuk benar-benar tanpa file, kita perlu memicu backup ke DB di sini.
+  });
 
-    // Event: QR Code
-    client.on("qr", (qr) => {
-        console.log(`[QR] Silakan scan QR untuk device: ${deviceId}`);
-        qrcode.generate(qr, { small: true });
-        updateDeviceStatus(deviceId, "QR");
-        if (io) io.emit("qr-code", { deviceId, qr });
-    });
-
-    // Event: Authenticated (PENTING! Di sini kita ambil datanya buat simpan ke DB)
-    client.on("authenticated", async () => {
-        console.log(`✅ ${deviceId} AUTHENTICATED`);
-        // Catatan: whatsapp-web.js LocalAuth menangani file secara internal.
-        // Untuk benar-benar tanpa file, kita perlu memicu backup ke DB di sini.
-    });
-
-    // Event: Ready
-    client.on("ready", async () => {
-        console.log(`✅ ${deviceId} DEVICE READY`);
-        await updateDeviceStatus(deviceId, "READY", client.info.wid.user);
-    });
-    // Event: Pesan masuk (PRIVATE)
-    client.on("message", async (message) => {
-        if (
-            message.from.endsWith("@g.us") ||
-            message.from.endsWith("@broadcast") ||
-            message.isStatus ||
-            message.from.endsWith("@newsletter") ||
-            message.fromMe
-        ) {
-            return;
-        }
-        await saveInboxMessage(deviceId, message);
-    });
-
-
-    // Event: Disconnected
-    client.on("disconnected", async (reason) => {
-        console.log(`✖️ ${deviceId} Terputus: ${reason}`);
-        await updateDeviceStatus(deviceId, "disconnected");
-        // Hapus session di DB kalau user sengaja logout
-        await db.run(`DELETE FROM whatsapp_sessions WHERE device_id = ?`, [deviceId]);
-    });
-
-    try {
-        await client.initialize();
-        clients.set(deviceId, client);
-        return { success: true, deviceId };
-    } catch (err) {
-        console.error(`❌ Gagal initialize:`, err.message);
-        await updateDeviceStatus(deviceId, "disconnected");
-        throw err;
+  // Event: Ready
+  client.on("ready", async () => {
+    console.log(`✅ ${deviceId} DEVICE READY`);
+    await updateDeviceStatus(deviceId, "READY", client.info.wid.user);
+  });
+  // Event: Pesan masuk (PRIVATE)
+  client.on("message", async (message) => {
+    if (
+      message.from.endsWith("@g.us") ||
+      message.from.endsWith("@broadcast") ||
+      message.isStatus ||
+      message.from.endsWith("@newsletter") ||
+      message.fromMe
+    ) {
+      return;
     }
+    await saveInboxMessage(deviceId, message);
+  });
+
+  // Event: Disconnected
+  client.on("disconnected", async (reason) => {
+    console.log(`✖️ ${deviceId} Terputus: ${reason}`);
+    await updateDeviceStatus(deviceId, "disconnected");
+    // Hapus session di DB kalau user sengaja logout
+    await db.run(`DELETE FROM whatsapp_sessions WHERE device_id = ?`, [
+      deviceId,
+    ]);
+  });
+
+  try {
+    await client.initialize();
+    clients.set(deviceId, client);
+    return { success: true, deviceId };
+  } catch (err) {
+    console.error(`❌ Gagal initialize:`, err.message);
+    await updateDeviceStatus(deviceId, "disconnected");
+    throw err;
+  }
 }
 // ======================================================
 // 🧾 GET QR CODE
@@ -262,12 +274,23 @@ export async function getQRCode(deviceId) {
 // ======================================================
 // ✉️ KIRIM PESAN (TEXT / IMAGE) + VALIDASI NOMOR WA (FIX: BIN IMAGE BUG)
 // ======================================================
-export async function sendMessageService(deviceId, number, message, imagePath = null) {
+export async function sendMessageService(
+  deviceId,
+  number,
+  message,
+  imagePath = null,
+) {
   const tempMessageId = Date.now().toString();
   const formatted = number.includes("@c.us") ? number : `${number}@c.us`;
   const plainNumber = number.replace("@c.us", ""); // 🔹 untuk validasi getNumberId
 
-  await saveOutboxMessage(deviceId, formatted, message, "PENDING", tempMessageId);
+  await saveOutboxMessage(
+    deviceId,
+    formatted,
+    message,
+    "PENDING",
+    tempMessageId,
+  );
 
   try {
     const client = clients.get(deviceId);
@@ -276,7 +299,9 @@ export async function sendMessageService(deviceId, number, message, imagePath = 
     // ✅ CEK NOMOR WA TERDAFTAR
     const isRegistered = await client.getNumberId(plainNumber);
     if (!isRegistered) {
-      console.warn(`🚫 Nomor ${plainNumber} tidak terdaftar di WhatsApp. Pesan tidak dikirim.`);
+      console.warn(
+        `🚫 Nomor ${plainNumber} tidak terdaftar di WhatsApp. Pesan tidak dikirim.`,
+      );
       await db.run(`UPDATE Messages SET status = ? WHERE messageId = ?`, [
         "NOT_REGISTERED",
         tempMessageId,
@@ -287,10 +312,10 @@ export async function sendMessageService(deviceId, number, message, imagePath = 
     // 🔍 Pastikan path absolut
     let absolutePath = imagePath ? path.resolve(imagePath) : null;
 
-   let response;
+    let response;
     if (absolutePath && fs.existsSync(absolutePath)) {
       const ext = path.extname(absolutePath).toLowerCase();
-      
+
       // 1. Cek kalau ext kosong, kita kasih default image/png atau jpeg
       let mimeType = "application/octet-stream";
       if (ext === ".jpg" || ext === ".jpeg") mimeType = "image/jpeg";
@@ -299,7 +324,7 @@ export async function sendMessageService(deviceId, number, message, imagePath = 
       else {
         // JIKA FILE TIDAK PUNYA EKSTENSI (KASUS KAMU)
         // Kita paksa jadi image/png atau jpeg supaya WhatsApp mau baca
-        mimeType = "image/jpeg"; 
+        mimeType = "image/jpeg";
       }
 
       const media = pkg.MessageMedia.fromFilePath(absolutePath);
@@ -307,13 +332,13 @@ export async function sendMessageService(deviceId, number, message, imagePath = 
 
       // 2. INI KUNCINYA: Tambahkan baris ini!
       // Kita kasih nama file "bohong-bohongan" yang ada ekstensinya
-      media.filename = `image_${Date.now()}${ext || '.jpg'}`; 
+      media.filename = `image_${Date.now()}${ext || ".jpg"}`;
 
       console.log(`🖼️ Mengirim gambar: ${absolutePath} as ${mimeType}`);
-      response = await client.sendMessage(formatted, media, { caption: message });
-    
-
-} else { 
+      response = await client.sendMessage(formatted, media, {
+        caption: message,
+      });
+    } else {
       // ✅ <--- TAMBAHKAN BLOK ELSE INI PAK BOS
       // Kalau tidak ada gambar, maka kirim teks murni
       console.log(`💬 Mengirim pesan teks murni ke: ${formatted}`);
@@ -322,7 +347,7 @@ export async function sendMessageService(deviceId, number, message, imagePath = 
     // Update status ke SENT
     await db.run(
       `UPDATE Messages SET status = ?, messageId = ? WHERE messageId = ?`,
-      ["SENT", response.id._serialized, tempMessageId]
+      ["SENT", response.id._serialized, tempMessageId],
     );
 
     return { success: true, message: "Pesan terkirim" };
@@ -335,7 +360,6 @@ export async function sendMessageService(deviceId, number, message, imagePath = 
     throw err;
   }
 }
-
 
 // ======================================================
 // 🔁 AUTO RECONNECT (FINAL)
@@ -368,18 +392,20 @@ export async function deleteSession(deviceId) {
 
     // 1. Ambil client dari memory
     const client = clients.get(deviceId);
-    
+
     // 2. WAJIB: Hapus dulu dari database SEBELUM hapus folder
     // Biar kalau NPM restart, autoReconnect nggak nemu data ini lagi
     await db.run(`DELETE FROM Devices WHERE deviceId = ?`, [deviceId]);
-    await db.run(`DELETE FROM whatsapp_sessions WHERE device_id = ?`, [deviceId]);
+    await db.run(`DELETE FROM whatsapp_sessions WHERE device_id = ?`, [
+      deviceId,
+    ]);
     console.log(`✅ Data ${deviceId} dihapus dari Database.`);
 
     if (client) {
       console.log(`🔌 Mematikan koneksi WhatsApp untuk ${deviceId}...`);
       // Gunakan logout() agar session di server WA juga diputus
       try {
-        await client.logout(); 
+        await client.logout();
         await client.destroy();
       } catch (logErr) {
         console.log("Catatan: Client sudah mati sebelum logout.");
@@ -390,7 +416,11 @@ export async function deleteSession(deviceId) {
     // 3. Hapus folder fisik
     // Kita kasih delay sedikit biar proses DB benar-benar kelar
     setTimeout(() => {
-      const sessionPath = path.join(process.cwd(), "temp_sessions", `session-${deviceId}`);
+      const sessionPath = path.join(
+        process.cwd(),
+        "temp_sessions",
+        `session-${deviceId}`,
+      );
       if (fs.existsSync(sessionPath)) {
         fs.rmSync(sessionPath, { recursive: true, force: true });
         console.log(`📁 Folder fisik ${deviceId} dibersihkan.`);
@@ -398,7 +428,7 @@ export async function deleteSession(deviceId) {
     }, 2000);
 
     if (io) io.emit("device-status", { deviceId, status: "DELETED" });
-    
+
     return { success: true };
   } catch (err) {
     console.error(`❌ Gagal hapus session ${deviceId}:`, err.message);
@@ -416,4 +446,3 @@ export const listDevices = async () => {
     throw err;
   }
 };
-

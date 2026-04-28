@@ -24,7 +24,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm run dev"
+args = "node server.js"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
@@ -36,6 +36,7 @@ externalPort = 3001
 
 [[ports]]
 localPort = 5000
+externalPort = 80
 
 [deployment]
 deploymentTarget = "vm"

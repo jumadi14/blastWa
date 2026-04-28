@@ -1,5 +1,6 @@
 {pkgs}: {
   deps = [
+    pkgs.psmisc
     pkgs.chromium
     pkgs.xorg.libxcb
     pkgs.xorg.libXrandr
