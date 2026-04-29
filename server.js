@@ -104,11 +104,13 @@ server.listen(PORT, HOST, async () => {
   console.log(`✅ Server running on http://${HOST}:${PORT}`);
   console.log(`✅ Socket.IO running`);
 
-  // try {
-  // await autoReconnectDevices();
-  // } catch (err) {
-  // console.error("❌ Error saat auto-reconnect devices:", err.message);
-  //  }
+  // Pulihkan kembali device yang sebelumnya sudah login (dibungkus
+  // try/catch supaya satu device gagal tidak menggagalkan startup server).
+  try {
+    await autoReconnectDevices();
+  } catch (err) {
+    console.error("❌ Error saat auto-reconnect devices:", err.message);
+  }
 
   // === Scheduler Worker ===
   console.log(

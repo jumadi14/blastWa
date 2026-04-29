@@ -1,9 +1,67 @@
 import fs from "fs";
 import path from "path";
+import { execSync } from "child_process";
 import pkg from "whatsapp-web.js";
 const { Client, RemoteAuth, MessageMedia } = pkg;
 import qrcode from "qrcode-terminal";
 import db from "../models/db.js";
+
+// ======================================================
+// 🧹 HELPER: Bersihkan proses Chromium yatim & file lock
+// ======================================================
+function cleanupSessionLocks(deviceId) {
+  const sessionDir = path.join(
+    process.cwd(),
+    "wwebjs_auth",
+    `session-${deviceId}`,
+  );
+
+  // 1. Bunuh proses Chromium yang masih memakai profile ini
+  try {
+    const pattern = `wwebjs_auth/session-${deviceId}`;
+    const out = execSync(`pgrep -f "${pattern}" || true`, {
+      encoding: "utf8",
+    }).trim();
+    if (out) {
+      const pids = out.split("\n").filter(Boolean);
+      for (const pid of pids) {
+        try {
+          process.kill(parseInt(pid, 10), "SIGKILL");
+          console.log(`🪓 Membunuh chromium yatim PID ${pid} (${deviceId})`);
+        } catch (e) {
+          // proses sudah tidak ada
+        }
+      }
+    }
+  } catch (e) {
+    // pgrep tidak tersedia / gagal — abaikan
+  }
+
+  // 2. Hapus semua file Singleton* yg menyebabkan "profile in use"
+  try {
+    if (fs.existsSync(sessionDir)) {
+      for (const name of fs.readdirSync(sessionDir)) {
+        if (name.startsWith("Singleton")) {
+          try {
+            fs.unlinkSync(path.join(sessionDir, name));
+          } catch (_) {}
+        }
+      }
+      const defaultDir = path.join(sessionDir, "Default");
+      if (fs.existsSync(defaultDir)) {
+        for (const name of fs.readdirSync(defaultDir)) {
+          if (name.startsWith("Singleton")) {
+            try {
+              fs.unlinkSync(path.join(defaultDir, name));
+            } catch (_) {}
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`⚠️ Gagal bersihkan lock ${deviceId}:`, e.message);
+  }
+}
 
 // ======================================================
 // 🔧 SETUP DASAR
@@ -264,19 +322,9 @@ export async function createSession(deviceId) {
 
   // 3. Eksekusi Initialization
   try {
-    // Hapus file lock Chromium sebelum start (mencegah error Code 21)
-    const lockPath = path.join(
-      process.cwd(),
-      "wwebjs_auth",
-      `session-${deviceId}`,
-      "Default",
-      "SingletonLock",
-    );
-    if (fs.existsSync(lockPath)) {
-      try {
-        fs.unlinkSync(lockPath);
-      } catch (e) {}
-    }
+    // Bunuh proses Chromium yatim & hapus semua file lock untuk
+    // mencegah error "profile appears to be in use" (Code 21)
+    cleanupSessionLocks(deviceId);
 
     await client.initialize();
     clients.set(deviceId, client);
@@ -442,17 +490,21 @@ export async function deleteSession(deviceId) {
       clients.delete(deviceId);
     }
 
-    // 3. Hapus folder fisik
-    // Kita kasih delay sedikit biar proses DB benar-benar kelar
+    // 3. Bunuh proses Chromium yatim untuk device ini, lalu hapus folder fisik
+    cleanupSessionLocks(deviceId);
     setTimeout(() => {
       const sessionPath = path.join(
         process.cwd(),
-        "temp_sessions",
+        "wwebjs_auth",
         `session-${deviceId}`,
       );
       if (fs.existsSync(sessionPath)) {
-        fs.rmSync(sessionPath, { recursive: true, force: true });
-        console.log(`📁 Folder fisik ${deviceId} dibersihkan.`);
+        try {
+          fs.rmSync(sessionPath, { recursive: true, force: true });
+          console.log(`📁 Folder fisik ${deviceId} dibersihkan.`);
+        } catch (e) {
+          console.error(`⚠️ Gagal hapus folder ${deviceId}:`, e.message);
+        }
       }
     }, 2000);
 
