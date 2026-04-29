@@ -25,6 +25,16 @@ import { processDueTasks } from "./services/schedulerService.js";
 // === Load environment variables ===
 dotenv.config();
 
+// === Global Crash Protection ===
+// Mencegah backend mati ketika Puppeteer / WhatsApp / library lain
+// melempar error tak tertangkap (mis. Chromium tiba-tiba crash saat tambah device).
+process.on("uncaughtException", (err) => {
+  console.error("⚠️ [uncaughtException] Backend tidak crash:", err?.stack || err?.message || err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("⚠️ [unhandledRejection] Backend tidak crash:", reason?.stack || reason?.message || reason);
+});
+
 // === Initialize App & Server ===
 const app = express();
 const PORT = 5000;
@@ -33,15 +43,24 @@ const HOST = "0.0.0.0";
 // === Middleware ===
 // HAPUS cors() lama, ganti dengan blok ini
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "http://localhost:5173");
+  // Daftar domain yang diizinkan (Localhost & Domain Asli)
+  const allowedOrigins = ["http://localhost:5173", "https://wablast.jps.co.id"];
+
+  const origin = req.headers.origin;
+
+  if (allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+  }
+
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.header("Access-Control-Allow-Credentials", "true");
 
-  // INI KUNCINYA: Menjawab browser saat dia "cek ombak" (OPTIONS)
+  // Tangani Preflight (Request OPTIONS)
   if (req.method === "OPTIONS") {
     return res.sendStatus(200);
   }
+
   next();
 });
 app.use(express.json());
@@ -87,9 +106,9 @@ server.listen(PORT, HOST, async () => {
 
   // try {
   // await autoReconnectDevices();
-  //} catch (err) {
-  //console.error("❌ Error saat auto-reconnect devices:", //err.message);
-  //}
+  // } catch (err) {
+  // console.error("❌ Error saat auto-reconnect devices:", err.message);
+  //  }
 
   // === Scheduler Worker ===
   console.log(

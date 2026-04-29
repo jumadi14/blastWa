@@ -157,14 +157,13 @@ async function saveOutboxMessage(deviceId, toNumber, body, status, msgId) {
     );
   }
 }
-
 // ======================================================
-// ⚙️ SESSION MANAGEMENT (DB VERSION)
+// ⚙️ SESSION MANAGEMENT (FIXED FOR REPLIT)
 // ======================================================
 export async function createSession(deviceId) {
-  console.log(`🚀 Menginisialisasi session via Database: ${deviceId}`);
+  console.log(`🚀 Menginisialisasi session: ${deviceId}`);
 
-  // 1. Pastikan Device terdaftar di tabel Devices
+  // 1. Database Setup (Status Awal)
   try {
     const existingDevice = await db.get(
       `SELECT deviceId FROM Devices WHERE deviceId = ?`,
@@ -173,8 +172,7 @@ export async function createSession(deviceId) {
     if (!existingDevice) {
       await db.run(
         `INSERT INTO Devices (deviceId, status, createdAt) 
-             VALUES (?, ?, ?) 
-             ON DUPLICATE KEY UPDATE status = VALUES(status)`,
+             VALUES (?, ?, ?)`,
         [deviceId, "initializing", Math.floor(Date.now() / 1000)],
       );
     } else {
@@ -184,13 +182,18 @@ export async function createSession(deviceId) {
     console.error(`[DB ERROR] Setup device gagal:`, err.message);
   }
 
-  // 2. Setup Client dengan LocalAuth (Tapi folder ini nanti jadi temporary saja)
+  // 2. Setup Client dengan Path Permanen
+  // Gunakan 'wwebjs_auth' agar tidak dianggap file temporary oleh Replit
   const client = new Client({
     authStrategy: new pkg.LocalAuth({
       clientId: deviceId,
-      dataPath: path.join(process.cwd(), "temp_sessions"),
+      dataPath: path.join(process.cwd(), "wwebjs_auth"),
     }),
     puppeteer: {
+      headless: true,
+      // 🛑 TAMBAHKAN INI: Membantu stabilitas di Replit
+      handleSIGINT: false,
+      handleSIGTERM: false,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -198,9 +201,10 @@ export async function createSession(deviceId) {
         "--disable-accelerated-2d-canvas",
         "--no-first-run",
         "--no-zygote",
-        "--single-process", // Penting di Replit
+        // "--single-process", // 👈 COBA MATIKAN BARIS INI (Kadang justru bikin crash di Replit baru)
         "--disable-gpu",
       ],
+      // 🛑 PASTIKAN INI: Replit biasanya butuh path spesifik
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
     },
   });
@@ -213,19 +217,26 @@ export async function createSession(deviceId) {
     if (io) io.emit("qr-code", { deviceId, qr });
   });
 
-  // Event: Authenticated (PENTING! Di sini kita ambil datanya buat simpan ke DB)
-  client.on("authenticated", async () => {
-    console.log(`✅ ${deviceId} AUTHENTICATED`);
-    // Catatan: whatsapp-web.js LocalAuth menangani file secara internal.
-    // Untuk benar-benar tanpa file, kita perlu memicu backup ke DB di sini.
+  // Event: Authenticated
+  client.on("authenticated", () => {
+    console.log(`✅ ${deviceId} TERAUTENTIKASI (Session disimpan ke disk)`);
+  });
+
+  // Event: Auth Failure (PENTING: Biar tahu kalau session rusak)
+  client.on("auth_failure", (msg) => {
+    console.error(`❌ ${deviceId} GAGAL OTENTIKASI:`, msg);
+    updateDeviceStatus(deviceId, "disconnected");
   });
 
   // Event: Ready
   client.on("ready", async () => {
-    console.log(`✅ ${deviceId} DEVICE READY`);
-    await updateDeviceStatus(deviceId, "READY", client.info.wid.user);
+    console.log(`✅ ${deviceId} DEVICE READY & CONNECTED`);
+    // Simpan nomor WA ke DB agar status sinkron
+    const waNumber = client.info.wid.user;
+    await updateDeviceStatus(deviceId, "READY", waNumber);
   });
-  // Event: Pesan masuk (PRIVATE)
+
+  // Event: Pesan masuk
   client.on("message", async (message) => {
     if (
       message.from.endsWith("@g.us") ||
@@ -243,22 +254,40 @@ export async function createSession(deviceId) {
   client.on("disconnected", async (reason) => {
     console.log(`✖️ ${deviceId} Terputus: ${reason}`);
     await updateDeviceStatus(deviceId, "disconnected");
-    // Hapus session di DB kalau user sengaja logout
-    await db.run(`DELETE FROM whatsapp_sessions WHERE device_id = ?`, [
-      deviceId,
-    ]);
   });
 
+  // Event: Error (PENTING agar error async dari Puppeteer/WhatsApp
+  // tidak naik jadi unhandled error & mematikan seluruh backend).
+  client.on("error", (err) => {
+    console.error(`⚠️ Client error untuk ${deviceId}:`, err?.message || err);
+  });
+
+  // 3. Eksekusi Initialization
   try {
+    // Hapus file lock Chromium sebelum start (mencegah error Code 21)
+    const lockPath = path.join(
+      process.cwd(),
+      "wwebjs_auth",
+      `session-${deviceId}`,
+      "Default",
+      "SingletonLock",
+    );
+    if (fs.existsSync(lockPath)) {
+      try {
+        fs.unlinkSync(lockPath);
+      } catch (e) {}
+    }
+
     await client.initialize();
     clients.set(deviceId, client);
     return { success: true, deviceId };
   } catch (err) {
-    console.error(`❌ Gagal initialize:`, err.message);
+    console.error(`❌ Gagal initialize ${deviceId}:`, err.message);
     await updateDeviceStatus(deviceId, "disconnected");
     throw err;
   }
 }
+
 // ======================================================
 // 🧾 GET QR CODE
 // ======================================================

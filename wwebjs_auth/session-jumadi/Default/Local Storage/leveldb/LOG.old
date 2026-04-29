@@ -1,0 +1,6 @@
+2026/04/29-10:55:01.616 3b3 Reusing MANIFEST /home/runner/workspace/wwebjs_auth/session-jumadi/Default/Local Storage/leveldb/MANIFEST-000001
+2026/04/29-10:55:01.620 3b3 Recovering log #3
+2026/04/29-10:55:01.623 3b3 Reusing old log /home/runner/workspace/wwebjs_auth/session-jumadi/Default/Local Storage/leveldb/000003.log 
+2026/04/29-10:55:24.664 3b4 Level-0 table #5: started
+2026/04/29-10:55:24.668 3b4 Level-0 table #5: 15502 bytes OK
+2026/04/29-10:55:24.674 3b4 Delete type=0 #3

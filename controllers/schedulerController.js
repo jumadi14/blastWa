@@ -35,7 +35,9 @@ export const sendBulkController = async (req, res) => {
   try {
     // 1️⃣ Baca kontak dari Excel
     const contacts = readContacts(filePath);
-    console.log(`[Excel Service] Berhasil membaca ${contacts.length} kontak dari ${filePath}`);
+    console.log(
+      `[Excel Service] Berhasil membaca ${contacts.length} kontak dari ${filePath}`,
+    );
 
     // 2️⃣ Konversi waktu ke timestamp UNIX (detik)
     if (scheduleAt && scheduleAt !== "") {
@@ -61,7 +63,7 @@ export const sendBulkController = async (req, res) => {
       message,
       parseInt(delay) || 3000,
       scheduleAtTimestamp,
-      imagePath
+      imagePath,
     );
 
     // 5️⃣ Respon sukses ke frontend
@@ -77,7 +79,9 @@ export const sendBulkController = async (req, res) => {
     });
 
     // Catatan log saja (tidak hapus file)
-    console.log(`[INFO] File Excel dan lampiran disimpan permanen di folder uploads/`);
+    console.log(
+      `[INFO] File Excel dan lampiran disimpan permanen di folder uploads/`,
+    );
   } catch (err) {
     console.error("❌ Error di sendBulkController:", err.message);
 
@@ -96,7 +100,9 @@ export const getScheduleDetail = async (req, res) => {
     const schedule = await db.get(`SELECT * FROM Schedules WHERE id = ?`, [id]);
 
     if (!schedule) {
-      return res.status(404).json({ success: false, message: "Jadwal tidak ditemukan." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Jadwal tidak ditemukan." });
     }
 
     // Kalau kolom contacts-nya disimpan dalam JSON string, parse dulu:
@@ -105,6 +111,7 @@ export const getScheduleDetail = async (req, res) => {
     res.status(200).json({
       success: true,
       data: schedule,
+      delayInSeconds: schedule.delay || 0,
     });
   } catch (err) {
     console.error("❌ Gagal mengambil detail jadwal:", err.message);
@@ -114,4 +121,3 @@ export const getScheduleDetail = async (req, res) => {
     });
   }
 };
-
