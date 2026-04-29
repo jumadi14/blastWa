@@ -42,36 +42,37 @@ const getTimeFilter = (timeframe) => {
 // ==========================
 // Helper: Data User (Ambil Role & Device IDs dari DB menggunakan userId sebagai Kunci)
 // ==========================
+// ==========================
+// Helper: Data User (Ambil Role & Device IDs dari DB menggunakan userId sebagai Kunci)
+// ==========================
 const getUserDataFromDb = async (userId) => {
-    // 1. Ambil Role user dari tabel Users
     const userRow = await db.get("SELECT role FROM Users WHERE id = ?", [
         userId,
     ]);
 
-    if (!userRow) {
-        throw new Error("User ID tidak terdaftar di database.");
-    }
+    if (!userRow) throw new Error("User ID tidak terdaftar di database.");
 
-    // 2. Ambil Device IDs yang terhubung
     const devicesRows = await db.all(
-        "SELECT device_id FROM UserDevices WHERE user_id = ?",
+        `SELECT d.deviceId 
+         FROM UserDevices ud
+         JOIN Devices d ON ud.device_id = d.id
+         WHERE ud.user_id = ?`,
         [userId],
     );
-    const deviceIds = devicesRows.map((row) => row.device_id);
+    const deviceIds = devicesRows.map((row) => row.deviceId);
+
+    console.log("userId:", userId);
+    console.log("deviceIds hasil query:", deviceIds);
 
     return {
         role: userRow.role,
         deviceIds: deviceIds,
     };
 };
-
 // =======================================================
 //                   ENDPOINT UMUM (USER BIASA)
 // =======================================================
 
-// ==========================
-// Message Summary
-// ==========================
 export const getMessageSummary = async (req, res) => {
     try {
         const { userId, timeframe } = req.query;
@@ -83,6 +84,12 @@ export const getMessageSummary = async (req, res) => {
         }
 
         const user = await getUserDataFromDb(userId);
+
+        // ✅ Guard
+        if (user.role !== "superuser" && user.deviceIds.length === 0) {
+            return res.json({ totalSent: 0, totalFailed: 0, totalPending: 0 });
+        }
+
         const timeFilter = getTimeFilter(timeframe);
 
         let deviceFilter = "";
@@ -121,9 +128,61 @@ export const getMessageSummary = async (req, res) => {
     }
 };
 
-// ==========================
-// Device Summary
-// ==========================
+export const getInboxSummary = async (req, res) => {
+    try {
+        const { userId, timeframe } = req.query;
+
+        if (!userId) {
+            return res
+                .status(400)
+                .json({ error: "User ID wajib ada di query parameter." });
+        }
+
+        const user = await getUserDataFromDb(userId);
+
+        // ✅ Guard
+        if (user.role !== "superuser" && user.deviceIds.length === 0) {
+            return res.json({ totalInbox: 0, totalRead: 0, totalUnread: 0 });
+        }
+
+        const timeFilter = getTimeFilter(timeframe);
+
+        let deviceFilter = "";
+        if (user.role !== "superuser" && user.deviceIds.length > 0) {
+            const devices = user.deviceIds.map((d) => `'${d}'`).join(",");
+            deviceFilter = `AND deviceId IN (${devices})`;
+        }
+
+        const whereClause = timeFilter
+            ? `WHERE ${timeFilter} ${deviceFilter}`
+            : deviceFilter
+              ? `WHERE 1=1 ${deviceFilter}`
+              : "";
+
+        const sql = `
+            SELECT 
+                COUNT(*) AS totalInbox,
+                SUM(CASE WHEN isRead = 1 THEN 1 ELSE 0 END) AS totalRead,
+                SUM(CASE WHEN isRead = 0 THEN 1 ELSE 0 END) AS totalUnread
+            FROM Inbox
+            ${whereClause};
+        `;
+
+        const result = await db.get(sql);
+
+        return res.json({
+            totalInbox: Number(result?.totalInbox) || 0,
+            totalRead: Number(result?.totalRead) || 0,
+            totalUnread: Number(result?.totalUnread) || 0,
+        });
+    } catch (err) {
+        console.error("Error fetching inbox summary:", err.message);
+        return res
+            .status(500)
+            .json({ error: err.message || "Gagal mengambil ringkasan inbox." });
+    }
+};
+
 export const getDeviceSummary = async (req, res) => {
     try {
         const { userId } = req.query;
@@ -135,6 +194,11 @@ export const getDeviceSummary = async (req, res) => {
         }
 
         const user = await getUserDataFromDb(userId);
+
+        // ✅ Guard
+        if (user.role !== "superuser" && user.deviceIds.length === 0) {
+            return res.json({ total: 0, online: 0, offline: 0 });
+        }
 
         let sql = "SELECT deviceId, status FROM Devices";
 
@@ -165,57 +229,6 @@ export const getDeviceSummary = async (req, res) => {
 };
 
 // ==========================
-// Inbox Summary
-// ==========================
-export const getInboxSummary = async (req, res) => {
-    try {
-        const { userId, timeframe } = req.query;
-
-        if (!userId) {
-            return res
-                .status(400)
-                .json({ error: "User ID wajib ada di query parameter." });
-        }
-
-        const user = await getUserDataFromDb(userId);
-        const timeFilter = getTimeFilter(timeframe);
-
-        let deviceFilter = "";
-        if (user.role !== "superuser" && user.deviceIds.length > 0) {
-            const devices = user.deviceIds.map((d) => `'${d}'`).join(",");
-            deviceFilter = `AND deviceId IN (${devices})`;
-        }
-
-        const whereClause = timeFilter
-            ? `WHERE ${timeFilter} ${deviceFilter}`
-            : deviceFilter
-              ? `WHERE 1=1 ${deviceFilter}`
-              : "";
-
-        const sql = `
-            SELECT 
-                COUNT(*) AS totalInbox,
-                SUM(CASE WHEN isRead = 1 THEN 1 ELSE 0 END) AS totalRead,
-                SUM(CASE WHEN isRead = 0 THEN 1 ELSE 0 END) AS totalUnread
-            FROM Inbox
-            ${whereClause};
-        `;
-        const result = await db.get(sql);
-
-        return res.json({
-            totalInbox: Number(result?.totalInbox) || 0,
-            totalRead: Number(result?.totalRead) || 0,
-            totalUnread: Number(result?.totalUnread) || 0,
-        });
-    } catch (err) {
-        console.error("Error fetching inbox summary:", err.message);
-        return res
-            .status(500)
-            .json({ error: err.message || "Gagal mengambil ringkasan inbox." });
-    }
-};
-
-// ==========================
 // Recent Outgoing Messages
 // ==========================
 export const getRecentOutgoing = async (req, res) => {
@@ -231,6 +244,11 @@ export const getRecentOutgoing = async (req, res) => {
 
         const user = await getUserDataFromDb(userId);
 
+        // ✅ Guard: kalau bukan superuser dan tidak punya device, return kosong
+        if (user.role !== "superuser" && user.deviceIds.length === 0) {
+            return res.json([]);
+        }
+
         let deviceFilter = "";
         if (user.role !== "superuser" && user.deviceIds.length > 0) {
             const devices = user.deviceIds.map((d) => `'${d}'`).join(",");
@@ -243,10 +261,9 @@ export const getRecentOutgoing = async (req, res) => {
             LEFT JOIN Devices d ON m.deviceId = d.deviceId
             ${deviceFilter}
             ORDER BY m.timestamp DESC
-           LIMIT ${limit}; 
+            LIMIT ${limit};
         `;
 
-        // PENTING: Hapus array [limit] di bawah ini, biarkan kosong ()
         const rows = await db.all(sql);
 
         const data = rows.map((msg) => ({
@@ -270,7 +287,6 @@ export const getRecentOutgoing = async (req, res) => {
 // ==========================
 export const getRecentIncoming = async (req, res) => {
     try {
-        // Pastikan limit adalah angka murni
         const limit = parseInt(req.query.limit) || 10;
         const { userId } = req.query;
 
@@ -282,23 +298,26 @@ export const getRecentIncoming = async (req, res) => {
 
         const user = await getUserDataFromDb(userId);
 
+        // ✅ Guard: kalau bukan superuser dan tidak punya device, return kosong
+        if (user.role !== "superuser" && user.deviceIds.length === 0) {
+            return res.json([]);
+        }
+
         let deviceFilter = "";
         if (user.role !== "superuser" && user.deviceIds.length > 0) {
             const devices = user.deviceIds.map((d) => `'${d}'`).join(",");
             deviceFilter = `WHERE i.deviceId IN (${devices})`;
         }
 
-        // PERBAIKAN DI SINI: Masukkan ${limit} langsung ke dalam string
         const sql = `
             SELECT i.id, i.deviceId, i.fromNumber, i.body, i.timestamp, d.phoneNumber AS deviceName
             FROM Inbox i
             LEFT JOIN Devices d ON i.deviceId = d.deviceId
             ${deviceFilter}
             ORDER BY i.timestamp DESC
-            LIMIT ${limit}; 
+            LIMIT ${limit};
         `;
 
-        // PENTING: Hapus array [limit] di bawah ini, biarkan kosong ()
         const rows = await db.all(sql);
 
         const data = rows.map((msg) => ({
@@ -431,8 +450,6 @@ export const getAdminInboxSummary = async (req, res) => {
 export const getAdminRecentOutgoing = async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 10;
-
-        // 🚨 TINDAKAN ISOLASI KRITIS: Pastikan userId di request diabaikan
         req.query.userId = null;
 
         const sql = `
@@ -440,9 +457,11 @@ export const getAdminRecentOutgoing = async (req, res) => {
             FROM Messages m
             LEFT JOIN Devices d ON m.deviceId = d.deviceId
             ORDER BY m.timestamp DESC
-            LIMIT ?;
+            LIMIT ${limit};
         `;
-        const rows = await db.all(sql, [limit]);
+
+        // ✅ Hapus [limit] di sini, pakai () kosong
+        const rows = await db.all(sql);
 
         const data = rows.map((msg) => ({
             ...msg,
@@ -460,14 +479,9 @@ export const getAdminRecentOutgoing = async (req, res) => {
     }
 };
 
-// ==========================
-// Admin Recent Incoming Messages (Final Fix: TANPA Filter + Isolasi)
-// ==========================
 export const getAdminRecentIncoming = async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 10;
-
-        // 🚨 TINDAKAN ISOLASI KRITIS: Pastikan userId di request diabaikan
         req.query.userId = null;
 
         const sql = `
@@ -475,9 +489,11 @@ export const getAdminRecentIncoming = async (req, res) => {
             FROM Inbox i
             LEFT JOIN Devices d ON i.deviceId = d.deviceId
             ORDER BY i.timestamp DESC
-            LIMIT ?;
+            LIMIT ${limit};
         `;
-        const rows = await db.all(sql, [limit]);
+
+        // ✅ Hapus [limit] di sini, pakai () kosong
+        const rows = await db.all(sql);
 
         const data = rows.map((msg) => ({
             ...msg,
@@ -499,13 +515,10 @@ export const getAdminRecentIncoming = async (req, res) => {
 // ==========================
 export const getAdminScheduleDetails = async (req, res) => {
     try {
-        // 🚨 Tindakan Isolasi Kritis: Pastikan userId di request diabaikan
         req.query.userId = null;
 
         const { timeframe } = req.query;
         const timeFilter = getTimeFilter(timeframe);
-
-        // Hanya filter waktu yang digunakan, tanpa filter perangkat
         const finalTimeFilter = timeFilter.replace("timestamp", "createdAt");
         const whereClause = finalTimeFilter ? `WHERE ${finalTimeFilter}` : "";
 
@@ -517,7 +530,8 @@ export const getAdminScheduleDetails = async (req, res) => {
                 scheduleAt,
                 status, 
                 deviceId, 
-                contacts 
+                contacts,
+                delay
             FROM Schedules
             ${whereClause}
             ORDER BY createdAt DESC;
@@ -527,19 +541,13 @@ export const getAdminScheduleDetails = async (req, res) => {
 
         const data = rows.map((schedule) => ({
             id: schedule.id,
-
-            // 1. Ganti judul menjadi 'name' dari tabel Templates
-            // Jika 'name' kosong, tetap pakai potongan pesan sebagai cadangan
-            title: schedule.name || schedule.message.substring(0, 50) + "...",
-
+            title: schedule.message.substring(0, 50) + "...", // ✅ Dari message langsung
             start: Number(schedule.scheduleAt) * 1000,
             allDay: false,
             status: schedule.status,
             deviceId: schedule.deviceId,
             contactsCount: JSON.parse(schedule.contacts).length || 0,
-
-            // 2. Pastikan delay juga ikut terambil
-            delay: schedule.delay || 0,
+            delay: (schedule.delay || 0) / 1000,
         }));
 
         return res.json(data);
@@ -550,7 +558,6 @@ export const getAdminScheduleDetails = async (req, res) => {
             .json({ error: "Gagal memuat detail jadwal Admin." });
     }
 };
-
 // =======================================================
 //                   ENDPOINT UMUM (USER BIASA)
 // =======================================================
@@ -571,40 +578,41 @@ export const getScheduleDetails = async (req, res) => {
         }
 
         const user = await getUserDataFromDb(userId);
+
+        // ✅ Kalau bukan superuser dan tidak punya device, return kosong
+        if (user.role !== "superuser" && user.deviceIds.length === 0) {
+            return res.json([]);
+        }
+
         const timeFilter = getTimeFilter(timeframe);
 
         let deviceFilter = "";
-        // Cek jika bukan superuser DAN punya device
         if (user.role !== "superuser" && user.deviceIds.length > 0) {
             const devices = user.deviceIds.map((d) => `'${d}'`).join(",");
             deviceFilter = `AND deviceId IN (${devices})`;
         }
 
-        // Pastikan filter waktu diarahkan ke kolom 'createdAt' dan terpisah dari deviceFilter
         const finalTimeFilter = timeFilter.replace("timestamp", "createdAt");
 
         const whereClauses = [];
         if (finalTimeFilter) whereClauses.push(finalTimeFilter);
-        if (deviceFilter) whereClauses.push(deviceFilter.substring(4)); // Hapus 'AND ' di awal
+        if (deviceFilter) whereClauses.push(deviceFilter.substring(4));
 
         const whereClause =
             whereClauses.length > 0
                 ? `WHERE ${whereClauses.join(" AND ")}`
                 : "";
 
-        // Catatan: Saya menggunakan logika WHERE yang lebih robust (AND) untuk menghindari spasi ganda,
-        // namun untuk kompatibilitas, saya akan kembali ke logika Anda yang menggunakan WHERE 1=1 jika perlu.
-        // Untuk saat ini, saya mengasumsikan logika AND OR yang lebih aman:
-
         const sql = `
             SELECT 
                 id, 
                 message, 
-                createdAt,      /* Menggunakan createdAt untuk filter */
-                scheduleAt,     /* Menggunakan scheduleAt untuk waktu event */
+                createdAt,
+                scheduleAt,
                 status, 
                 deviceId, 
-                contacts 
+                contacts,
+                delay
             FROM Schedules
             ${whereClause}
             ORDER BY createdAt DESC;
@@ -614,13 +622,13 @@ export const getScheduleDetails = async (req, res) => {
 
         const data = rows.map((schedule) => ({
             id: schedule.id,
-            title: schedule.message.substring(0, 50) + "...", // Judul singkat
-            // [PERBAIKAN KRITIS]: scheduleAt adalah ISO String/Timestamp Detik. Kita asumsikan itu adalah Unix Integer (detik) dan dikonversi ke Milidetik
+            title: schedule.message.substring(0, 50) + "...",
             start: Number(schedule.scheduleAt) * 1000,
             allDay: false,
             status: schedule.status,
             deviceId: schedule.deviceId,
             contactsCount: JSON.parse(schedule.contacts).length || 0,
+            delay: (schedule.delay || 0) / 1000,
         }));
 
         return res.json(data);
@@ -666,5 +674,8 @@ const fetchScheduledEvents = async () => {
         setEvents(formattedEvents); // Mengisi state events
     } catch (error) {
         console.error("Gagal mengambil data jadwal:", error);
+        console.log("userId:", userId);
+        console.log("deviceIds:", user.deviceIds);
+        console.log("whereClause:", whereClause);
     }
 };
