@@ -1,4 +1,6 @@
-FROM ghcr.io/puppeteer/puppeteer:latest
+git add Dockerfile
+git commit -m "fix: ganti base image ke node:20-slim dengan chromium"
+git push
 USER root
 WORKDIR /app
 COPY package*.json ./
