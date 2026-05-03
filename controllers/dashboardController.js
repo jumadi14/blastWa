@@ -524,29 +524,44 @@ export const getAdminScheduleDetails = async (req, res) => {
 
         const sql = `
             SELECT 
-                id, 
-                message, 
-                createdAt,
-                scheduleAt,
-                status, 
-                deviceId, 
-                contacts,
-                delay
+                Schedules.id, 
+                Schedules.message, 
+                Schedules.createdAt,
+                Schedules.scheduleAt,
+                Schedules.status, 
+                Schedules.deviceId, 
+                Schedules.contacts,
+                Schedules.delay,
+                Templates.name AS templateName,
+                GROUP_CONCAT(Messages.body SEPARATOR '\n---\n') AS sentMessages,
+                COUNT(CASE WHEN Messages.status IN ('SENT', 'DELIVERED', 'READ') THEN 1 END) AS successCount,
+                COUNT(CASE WHEN Messages.status IN ('FAILED', 'NOT_REGISTERED', 'REVOKED') THEN 1 END) AS failedCount
             FROM Schedules
+            LEFT JOIN Templates ON Schedules.templateId = Templates.id
+            LEFT JOIN Messages ON Messages.scheduleId = Schedules.id
             ${whereClause}
-            ORDER BY createdAt DESC;
+            GROUP BY Schedules.id
+            ORDER BY Schedules.createdAt DESC;
         `;
 
         const rows = await db.all(sql);
 
         const data = rows.map((schedule) => ({
             id: schedule.id,
-            title: schedule.message.substring(0, 50) + "...", // ✅ Dari message langsung
+            title:
+                schedule.templateName ||
+                schedule.message.substring(0, 50) + "...",
             start: Number(schedule.scheduleAt) * 1000,
             allDay: false,
             status: schedule.status,
             deviceId: schedule.deviceId,
+            messageBody:
+                schedule.sentMessages ||
+                schedule.message ||
+                "Tidak ada pesan yang tersimpan.",
             contactsCount: JSON.parse(schedule.contacts).length || 0,
+            successCount: schedule.successCount || 0, // ✅ GANTI INI
+            failedCount: schedule.failedCount || 0, // ✅ GANTI INI
             delay: (schedule.delay || 0) / 1000,
         }));
 
@@ -605,29 +620,44 @@ export const getScheduleDetails = async (req, res) => {
 
         const sql = `
             SELECT 
-                id, 
-                message, 
-                createdAt,
-                scheduleAt,
-                status, 
-                deviceId, 
-                contacts,
-                delay
+                Schedules.id, 
+                Schedules.message, 
+                Schedules.createdAt,
+                Schedules.scheduleAt,
+                Schedules.status, 
+                Schedules.deviceId, 
+                Schedules.contacts,
+                Schedules.delay,
+                Templates.name AS templateName,
+                GROUP_CONCAT(Messages.body SEPARATOR '\n---\n') AS sentMessages,
+                COUNT(CASE WHEN Messages.status IN ('SENT', 'DELIVERED', 'READ') THEN 1 END) AS successCount,
+                COUNT(CASE WHEN Messages.status IN ('FAILED', 'NOT_REGISTERED', 'REVOKED') THEN 1 END) AS failedCount
             FROM Schedules
+            LEFT JOIN Templates ON Schedules.templateId = Templates.id
+            LEFT JOIN Messages ON Messages.scheduleId = Schedules.id
             ${whereClause}
-            ORDER BY createdAt DESC;
+            GROUP BY Schedules.id
+            ORDER BY Schedules.createdAt DESC;
         `;
 
         const rows = await db.all(sql);
 
         const data = rows.map((schedule) => ({
             id: schedule.id,
-            title: schedule.message.substring(0, 50) + "...",
+            title:
+                schedule.templateName ||
+                schedule.message.substring(0, 50) + "...",
             start: Number(schedule.scheduleAt) * 1000,
             allDay: false,
             status: schedule.status,
             deviceId: schedule.deviceId,
+            messageBody:
+                schedule.sentMessages ||
+                schedule.message ||
+                "Tidak ada pesan yang tersimpan.",
             contactsCount: JSON.parse(schedule.contacts).length || 0,
+            successCount: schedule.successCount || 0, // ✅ GANTI INI
+            failedCount: schedule.failedCount || 0, // ✅ GANTI INI
             delay: (schedule.delay || 0) / 1000,
         }));
 

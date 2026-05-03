@@ -191,28 +191,29 @@ async function saveInboxMessage(deviceId, message) {
   }
 }
 
-async function saveOutboxMessage(deviceId, toNumber, body, status, msgId) {
+async function saveOutboxMessage(
+  deviceId,
+  toNumber,
+  body,
+  status,
+  msgId,
+  scheduleId = null,
+) {
   const timestamp = Math.floor(Date.now() / 1000);
   try {
-    // Kita pastikan messageId hanya diupdate, bukan dijadikan syarat unik
     await db.run(
-      `INSERT INTO Messages (deviceId, toNumber, body, timestamp, status, messageId)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO Messages (deviceId, toNumber, body, timestamp, status, messageId, scheduleId)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE 
          status = VALUES(status),
          messageId = VALUES(messageId),
-         timestamp = VALUES(timestamp)`,
-      [deviceId, toNumber, body, timestamp, status, msgId],
+         timestamp = VALUES(timestamp),
+         scheduleId = VALUES(scheduleId)`,
+      [deviceId, toNumber, body, timestamp, status, msgId, scheduleId],
     );
-    // Log ini hanya muncul kalau baris di atas BENAR-BENAR sukses
     console.log(`[DB SUCCESS] Outbox ke ${toNumber} berhasil.`);
   } catch (err) {
-    // Kalau muncul "Duplicate entry" di sini, berarti index UNIQUE di tabelmu
-    // ada yang bentrok dengan nilai baru yang kamu masukkan.
-    console.error(
-      `❌ DB Error: Gagal simpan pesan keluar di tabel Messages:`,
-      err.message,
-    );
+    console.error(`❌ DB Error: Gagal simpan pesan keluar:`, err.message);
   }
 }
 // ======================================================
@@ -356,10 +357,11 @@ export async function sendMessageService(
   number,
   message,
   imagePath = null,
+  scheduleId = null, // ✅ TAMBAH INI
 ) {
   const tempMessageId = Date.now().toString();
   const formatted = number.includes("@c.us") ? number : `${number}@c.us`;
-  const plainNumber = number.replace("@c.us", ""); // 🔹 untuk validasi getNumberId
+  const plainNumber = number.replace("@c.us", "");
 
   await saveOutboxMessage(
     deviceId,
@@ -367,18 +369,16 @@ export async function sendMessageService(
     message,
     "PENDING",
     tempMessageId,
-  );
+    scheduleId,
+  ); // ✅ TAMBAH scheduleId
 
   try {
     const client = clients.get(deviceId);
     if (!client) throw new Error("Device belum aktif atau tidak terhubung.");
 
-    // ✅ CEK NOMOR WA TERDAFTAR
     const isRegistered = await client.getNumberId(plainNumber);
     if (!isRegistered) {
-      console.warn(
-        `🚫 Nomor ${plainNumber} tidak terdaftar di WhatsApp. Pesan tidak dikirim.`,
-      );
+      console.warn(`🚫 Nomor ${plainNumber} tidak terdaftar di WhatsApp.`);
       await db.run(`UPDATE Messages SET status = ? WHERE messageId = ?`, [
         "NOT_REGISTERED",
         tempMessageId,
@@ -386,29 +386,19 @@ export async function sendMessageService(
       return { success: false, message: "Nomor tidak terdaftar di WhatsApp" };
     }
 
-    // 🔍 Pastikan path absolut
     let absolutePath = imagePath ? path.resolve(imagePath) : null;
-
     let response;
+
     if (absolutePath && fs.existsSync(absolutePath)) {
       const ext = path.extname(absolutePath).toLowerCase();
-
-      // 1. Cek kalau ext kosong, kita kasih default image/png atau jpeg
       let mimeType = "application/octet-stream";
       if (ext === ".jpg" || ext === ".jpeg") mimeType = "image/jpeg";
       else if (ext === ".png") mimeType = "image/png";
       else if (ext === ".webp") mimeType = "image/webp";
-      else {
-        // JIKA FILE TIDAK PUNYA EKSTENSI (KASUS KAMU)
-        // Kita paksa jadi image/png atau jpeg supaya WhatsApp mau baca
-        mimeType = "image/jpeg";
-      }
+      else mimeType = "image/jpeg";
 
       const media = pkg.MessageMedia.fromFilePath(absolutePath);
       media.mimetype = mimeType;
-
-      // 2. INI KUNCINYA: Tambahkan baris ini!
-      // Kita kasih nama file "bohong-bohongan" yang ada ekstensinya
       media.filename = `image_${Date.now()}${ext || ".jpg"}`;
 
       console.log(`🖼️ Mengirim gambar: ${absolutePath} as ${mimeType}`);
@@ -416,12 +406,10 @@ export async function sendMessageService(
         caption: message,
       });
     } else {
-      // ✅ <--- TAMBAHKAN BLOK ELSE INI PAK BOS
-      // Kalau tidak ada gambar, maka kirim teks murni
       console.log(`💬 Mengirim pesan teks murni ke: ${formatted}`);
       response = await client.sendMessage(formatted, message);
     }
-    // Update status ke SENT
+
     await db.run(
       `UPDATE Messages SET status = ?, messageId = ? WHERE messageId = ?`,
       ["SENT", response.id._serialized, tempMessageId],
@@ -437,7 +425,6 @@ export async function sendMessageService(
     throw err;
   }
 }
-
 // ======================================================
 // 🔁 AUTO RECONNECT (FINAL)
 // ======================================================

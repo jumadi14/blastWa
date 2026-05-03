@@ -1,3 +1,3 @@
-2026/04/29-17:04:06.895 38e Reusing MANIFEST /home/runner/workspace/wwebjs_auth/session-jumadi/Default/Local Storage/leveldb/MANIFEST-000001
-2026/04/29-17:04:06.910 38e Recovering log #13
-2026/04/29-17:04:06.910 38e Reusing old log /home/runner/workspace/wwebjs_auth/session-jumadi/Default/Local Storage/leveldb/000013.log 
+2026/05/03-07:24:56.694 235 Reusing MANIFEST /home/runner/workspace/wwebjs_auth/session-jumadi/Default/Local Storage/leveldb/MANIFEST-000001
+2026/05/03-07:24:56.700 235 Recovering log #23
+2026/05/03-07:24:56.701 235 Reusing old log /home/runner/workspace/wwebjs_auth/session-jumadi/Default/Local Storage/leveldb/000023.log 

@@ -16,6 +16,8 @@ const safeUnlink = (filePath) => {
 // Controller utama
 export const sendBulkController = async (req, res) => {
   const { deviceId, message, delay, scheduleAt, templateId } = req.body;
+  console.log("req.body:", req.body);
+  console.log("templateId diterima:", templateId);
 
   // Ambil dua file: Excel & lampiran (opsional)
   const excelFile = req.files?.excelFile?.[0];
@@ -64,6 +66,7 @@ export const sendBulkController = async (req, res) => {
       parseInt(delay) || 3000,
       scheduleAtTimestamp,
       imagePath,
+      templateId, // ✅ TAMBAH INI
     );
 
     // 5️⃣ Respon sukses ke frontend

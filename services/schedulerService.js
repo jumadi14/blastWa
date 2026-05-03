@@ -4,7 +4,7 @@ import { sendMessageService } from "./whatsappService.js";
 import db from "../models/db.js";
 
 // 🛑 VARIABEL BARU: Melacak apakah worker sedang aktif memproses (Mutex)
-let isProcessingTasks = false; 
+let isProcessingTasks = false;
 
 // --------------------------------------------------------
 // FUNGSI UTAMA UNTUK MENYIMPAN JADWAL
@@ -15,8 +15,8 @@ export const saveScheduledTask = async (task) => {
 
     try {
         await db.run(
-            `INSERT INTO Schedules (deviceId, contacts, message, delay, scheduleAt, imagePath, status, createdAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO Schedules (deviceId, contacts, message, delay, scheduleAt, imagePath, status, createdAt, templateId)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 task.deviceId,
                 contactsJson,
@@ -24,11 +24,14 @@ export const saveScheduledTask = async (task) => {
                 task.delay,
                 task.scheduleAt,
                 task.imagePath,
-                'PENDING',
-                timestamp
-            ]
+                "PENDING",
+                timestamp,
+                task.templateId || null, // ✅ TAMBAH INI
+            ],
         );
-        console.log(`⏳ Pesan Blast berhasil disimpan, dijadwalkan pada ${task.scheduleAt}`);
+        console.log(
+            `⏳ Pesan Blast berhasil disimpan, dijadwalkan pada ${task.scheduleAt}`,
+        );
     } catch (err) {
         console.error("❌ Gagal menyimpan jadwal ke DB:", err.message);
         throw new Error("Database error during scheduling.");
@@ -38,12 +41,21 @@ export const saveScheduledTask = async (task) => {
 // --------------------------------------------------------
 // FUNGSI INTI SEND MESSAGES
 // --------------------------------------------------------
-export const sendImmediateBlast = async (deviceId, contacts, message, delay = 3000, imagePath = null) => {
+export const sendImmediateBlast = async (
+    deviceId,
+    contacts,
+    message,
+    delay = 3000,
+    imagePath = null,
+    scheduleId = null, // ✅ TAMBAH INI
+) => {
     for (const contact of contacts) {
         const rawNumber = contact.hp;
 
         if (!rawNumber) {
-            console.warn(`⚠️ Nomor kosong, skip: ${contact.nama || 'Tidak ada Nama'}`);
+            console.warn(
+                `⚠️ Nomor kosong, skip: ${contact.nama || "Tidak ada Nama"}`,
+            );
             continue;
         }
 
@@ -57,10 +69,19 @@ export const sendImmediateBlast = async (deviceId, contacts, message, delay = 30
         const personalizedMessage = message.replace("{{nama}}", name);
 
         try {
-            await sendMessageService(deviceId, formattedNumber, personalizedMessage, imagePath);
+            await sendMessageService(
+                deviceId,
+                formattedNumber,
+                personalizedMessage,
+                imagePath,
+                scheduleId, // ✅ TAMBAH INI
+            );
             console.log(`✅ Pesan terkirim ke ${name} (${formattedNumber})`);
         } catch (err) {
-            console.error(`❌ Gagal kirim ke ${name} (${formattedNumber}):`, err.message);
+            console.error(
+                `❌ Gagal kirim ke ${name} (${formattedNumber}):`,
+                err.message,
+            );
         }
 
         if (delay > 0) {
@@ -86,7 +107,7 @@ export const processDueTasks = async () => {
     try {
         dueTasks = await db.all(
             `SELECT * FROM Schedules WHERE status = 'PENDING' AND scheduleAt <= ?`,
-            [currentTimestamp]
+            [currentTimestamp],
         );
     } catch (err) {
         console.error("❌ Gagal mengambil tugas jatuh tempo:", err.message);
@@ -99,53 +120,93 @@ export const processDueTasks = async () => {
         return;
     }
 
-    console.log(`🔔 DITEMUKAN ${dueTasks.length} tugas jatuh tempo. Mulai proses pengiriman...`);
+    console.log(
+        `🔔 DITEMUKAN ${dueTasks.length} tugas jatuh tempo. Mulai proses pengiriman...`,
+    );
 
     try {
         for (const task of dueTasks) {
             // Operasi DB Pertama yang bisa bentrok
-            await db.run(`UPDATE Schedules SET status = 'PROCESSING' WHERE id = ?`, [task.id]); 
+            await db.run(
+                `UPDATE Schedules SET status = 'PROCESSING' WHERE id = ?`,
+                [task.id],
+            );
 
             let errorMessage = null;
             try {
                 const contacts = JSON.parse(task.contacts);
-                await sendImmediateBlast(task.deviceId, contacts, task.message, task.delay, task.imagePath);
+                await sendImmediateBlast(
+                    task.deviceId,
+                    contacts,
+                    task.message,
+                    task.delay,
+                    task.imagePath,
+                    task.id, // ✅ TAMBAH INI (task.id = scheduleId)
+                );
             } catch (err) {
-                console.error(`❌ Gagal memproses tugas ID ${task.id}:`, err.message);
+                console.error(
+                    `❌ Gagal memproses tugas ID ${task.id}:`,
+                    err.message,
+                );
                 errorMessage = err.message;
             } finally {
                 // Operasi DB Kedua yang bisa bentrok
-                const finalStatus = errorMessage ? 'FAILED' : 'COMPLETED';
+                const finalStatus = errorMessage ? "FAILED" : "COMPLETED";
                 await db.run(
                     `UPDATE Schedules SET status = ?, errorMessage = ? WHERE id = ?`,
-                    [finalStatus, errorMessage, task.id]
+                    [finalStatus, errorMessage, task.id],
                 );
                 if (!errorMessage) {
-                    console.log(`✅ Tugas jadwal ID ${task.id} selesai dikirim.`);
+                    console.log(
+                        `✅ Tugas jadwal ID ${task.id} selesai dikirim.`,
+                    );
                 }
             }
         }
         console.log("✅ Semua tugas jatuh tempo telah selesai diproses.");
     } catch (err) {
-        console.error("🔥 ERROR FATAL saat looping tugas jatuh tempo:", err.message);
+        console.error(
+            "🔥 ERROR FATAL saat looping tugas jatuh tempo:",
+            err.message,
+        );
     } finally {
         // 2. RESET STATUS: Selalu reset status, bahkan jika terjadi error.
-        isProcessingTasks = false; 
+        isProcessingTasks = false;
     }
 };
 
 // --------------------------------------------------------
 // FUNGSI UTAMA (sendScheduledMessages)
 // --------------------------------------------------------
-export const sendScheduledMessages = async (deviceId, contacts, message, delay = 3000, scheduleAt = null, imagePath = null) => {
+export const sendScheduledMessages = async (
+    deviceId,
+    contacts,
+    message,
+    delay = 3000,
+    scheduleAt = null,
+    imagePath = null,
+    templateId = null,
+) => {
     if (!contacts || contacts.length === 0) {
         throw new Error("Daftar kontak kosong atau tidak valid.");
     }
 
     if (scheduleAt) {
-        const taskPayload = { deviceId, contacts, message, delay, scheduleAt, imagePath };
+        const taskPayload = {
+            deviceId,
+            contacts,
+            message,
+            delay,
+            scheduleAt,
+            imagePath,
+            templateId,
+        }; // ✅ tambah templateId
         await saveScheduledTask(taskPayload);
-        return { message: "Task successfully scheduled", scheduleAt, contactCount: contacts.length };
+        return {
+            message: "Task successfully scheduled",
+            scheduleAt,
+            contactCount: contacts.length,
+        };
     }
 
     await sendImmediateBlast(deviceId, contacts, message, delay, imagePath);
@@ -158,13 +219,14 @@ const WORKER_INTERVAL_MS = 30000; // 30 detik
 
 export const startScheduleWorker = () => {
     // Jalankan Worker pertama kali segera
-    processDueTasks(); 
-    
+    processDueTasks();
+
     // Set Interval untuk mengulang setiap 30 detik
     setInterval(() => {
         processDueTasks();
     }, WORKER_INTERVAL_MS);
 
-    console.log(`⏱️ Scheduler Worker aktif, memproses tugas setiap ${WORKER_INTERVAL_MS / 1000} detik.`);
+    console.log(
+        `⏱️ Scheduler Worker aktif, memproses tugas setiap ${WORKER_INTERVAL_MS / 1000} detik.`,
+    );
 };
-
