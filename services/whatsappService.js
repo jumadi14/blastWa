@@ -264,7 +264,7 @@ export async function createSession(deviceId) {
         "--disable-gpu",
       ],
       // 🛑 PASTIKAN INI: Replit biasanya butuh path spesifik
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
+      //executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
     },
   });
 
