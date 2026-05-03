@@ -253,6 +253,7 @@ export async function createSession(deviceId) {
       // 🛑 TAMBAHKAN INI: Membantu stabilitas di Replit
       handleSIGINT: false,
       handleSIGTERM: false,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,  
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
