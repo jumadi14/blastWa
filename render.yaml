@@ -14,5 +14,4 @@ services:
         value: AVNS_XnkKMBk9l9FHQlegs5r
       - key: DB_NAME
         value: defaultdb
-      - key: PUPPETEER_EXECUTABLE_PATH
-        value: /usr/bin/google-chrome-stable
+      -
