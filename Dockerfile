@@ -1,16 +1,20 @@
-git add Dockerfile
-git commit -m "fix: ganti base image ke node:20-slim dengan chromium"
-git push
-USER root
+FROM node:20-slim
+
+RUN apt-get update && apt-get install -y \
+    chromium \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
+
 COPY package*.json ./
 RUN npm install
 
-# ✅ Print path Chrome untuk kita tahu
-RUN find /home -name "chrome" -type f 2>/dev/null && \
-    find /usr -name "chrome" -type f 2>/dev/null && \
-    find /root -name "chrome" -type f 2>/dev/null
-
 COPY . .
-EXPOSE 10000
+
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+EXPOSE 5000
+
 CMD ["node", "server.js"]
