@@ -1,128 +1,144 @@
-// 📁 src/controllers/deviceController.js
+// controllers/deviceController.js
+import db from "../models/db.js";
 import {
   createSession,
   getQRCode,
   sendMessageService,
-  deleteSession
+  deleteSession,
 } from "../services/whatsappService.js";
 
-import db from "../models/db.js";
-
-/** 🧩 Buat device baru dan generate session */
-export const createDevice = async (req, res) => {
+// ======================================================
+// ➕ CREATE DEVICE
+// ======================================================
+export async function createDevice(req, res) {
   try {
     const { deviceId, userId } = req.body;
+
     if (!deviceId || !userId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "deviceId dan userId wajib diisi" });
+      return res.status(400).json({
+        success: false,
+        message: "deviceId dan userId wajib diisi.",
+      });
     }
 
-    // Buat session di WhatsApp service
-    const result = await createSession(deviceId);
-
-    // Simpan info device ke tabel Devices
-    const now = Math.floor(Date.now() / 1000);
-    await db.run(
-      "INSERT OR REPLACE INTO Devices (deviceId, status, createdAt, userId) VALUES (?, ?, ?, ?)",
-      [deviceId, "INITIATING", now, userId]
+    // Cek apakah deviceId sudah ada
+    const existing = await db.get(
+      `SELECT deviceId FROM Devices WHERE deviceId = ?`,
+      [deviceId]
     );
 
-    // Simpan relasi ke tabel UserDevices
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        message: `Device "${deviceId}" sudah terdaftar.`,
+      });
+    }
+
+    // ✅ FIXED: Gunakan INSERT biasa + ON DUPLICATE KEY (MySQL syntax)
     await db.run(
-      "INSERT INTO UserDevices (user_id, device_id) VALUES (?, ?)",
+      `INSERT INTO Devices (deviceId, status, userId, createdAt)
+       VALUES (?, 'initializing', ?, ?)
+       ON DUPLICATE KEY UPDATE status = 'initializing'`,
+      [deviceId, userId, Math.floor(Date.now() / 1000)]
+    );
+
+    // Daftarkan ke tabel UserDevices juga
+    await db.run(
+      `INSERT INTO UserDevices (user_id, device_id)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE user_id = user_id`,
       [userId, deviceId]
-    );
+    ).catch(() => {
+      // Abaikan jika tabel UserDevices tidak ada / kolom beda
+    });
 
-    res.json({
+    // Mulai session Baileys (non-blocking)
+    createSession(deviceId).catch((err) => {
+      console.error(`❌ createSession error (${deviceId}):`, err.message);
+    });
+
+    return res.json({
       success: true,
-      message: `Device ${deviceId} berhasil dibuat dan terhubung ke user ${userId}`,
-      data: result
+      message: `Device "${deviceId}" berhasil dibuat. Scan QR untuk menghubungkan.`,
     });
   } catch (err) {
     console.error("❌ Gagal buat device:", err.message);
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
-};
+}
 
-/** 🧩 Ambil QR Code dari session */
-export const getQRCodeController = async (req, res) => {
+// ======================================================
+// 📷 GET QR CODE
+// ======================================================
+export async function getQRCodeController(req, res) {
   try {
     const { id } = req.params;
     const qr = await getQRCode(id);
-    res.json({ success: true, deviceId: id, qr });
+    return res.json({ success: true, qr });
   } catch (err) {
-    console.error(`❌ Gagal ambil QR untuk ${req.params.id}:`, err.message);
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(404).json({ success: false, message: err.message });
   }
-};
+}
 
-/** 🧩 List semua device dari DB (filter sesuai role user) */
-export const getAllDevices = async (req, res) => {
+// ======================================================
+// ✉️ SEND MESSAGE
+// ======================================================
+export async function sendMessageController(req, res) {
   try {
-    const { userId, role } = req.query;
+    const { deviceId, number, message, scheduleId } = req.body;
 
-    let devices;
-    if (role === "superuser") {
-      // Superuser lihat semua + nama pemilik
-      devices = await db.all(`
-        SELECT D.*, U.username
-        FROM Devices D
-        LEFT JOIN UserDevices UD ON D.deviceId = UD.device_id
-        LEFT JOIN Users U ON U.id = UD.user_id
-        ORDER BY D.createdAt DESC
-      `);
-    } else {
-      // User biasa lihat hanya miliknya
-      devices = await db.all(
-        `
-        SELECT D.*
-        FROM Devices D
-        INNER JOIN UserDevices UD ON D.deviceId = UD.device_id
-        WHERE UD.user_id = ?
-        ORDER BY D.createdAt DESC
-        `,
-        [userId]
-      );
+    if (!deviceId || !number || !message) {
+      return res.status(400).json({
+        success: false,
+        message: "deviceId, number, dan message wajib diisi.",
+      });
     }
 
-    res.json({ success: true, data: devices });
-  } catch (err) {
-    console.error("❌ Gagal list device:", err.message);
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
+    // Cek apakah ada file attachment
+    const imagePath = req.file?.path || null;
 
-/** 🧩 Kirim pesan dari device tertentu */
-export const sendMessageController = async (req, res) => {
-  try {
-    const { deviceId, number, message } = req.body;
-    const result = await sendMessageService(deviceId, number, message);
-    res.json({ success: true, result });
+    const result = await sendMessageService(
+      deviceId,
+      number,
+      message,
+      imagePath,
+      scheduleId || null
+    );
+
+    return res.json(result);
   } catch (err) {
     console.error("❌ Gagal kirim pesan:", err.message);
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
-};
+}
 
-/** 🧩 Hapus atau Logout device */
-export const deleteDevice = async (req, res) => {
+// ======================================================
+// 🗑️ DELETE DEVICE
+// ======================================================
+export async function deleteDevice(req, res) {
   try {
     const { id } = req.params;
 
+    const existing = await db.get(
+      `SELECT deviceId FROM Devices WHERE deviceId = ?`,
+      [id]
+    );
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: `Device "${id}" tidak ditemukan.`,
+      });
+    }
+
     await deleteSession(id);
 
-    // Hapus dari semua tabel terkait
-    await db.run("DELETE FROM Devices WHERE deviceId = ?", [id]);
-  
-
-    res.json({
+    return res.json({
       success: true,
-      message: `Session ${id} berhasil dihapus dan unlinked dari user.`
+      message: `Device "${id}" berhasil dihapus.`,
     });
   } catch (err) {
     console.error("❌ Gagal hapus device:", err.message);
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
-};
-
+}
