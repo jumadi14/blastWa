@@ -283,6 +283,14 @@ export async function createSession(deviceId) {
     updateDeviceStatus(deviceId, "disconnected");
     clients.delete(deviceId);
   });
+  // Tambahkan ini — tangkap semua event raw
+client.pupPage?.on('console', msg => {
+  console.log(`[BROWSER ${deviceId}]:`, msg.text());
+});
+
+client.pupPage?.on('error', err => {
+  console.error(`[BROWSER ERROR ${deviceId}]:`, err.message);
+});
 
   // Event: Ready
   client.on("ready", async () => {
