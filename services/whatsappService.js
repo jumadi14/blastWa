@@ -253,7 +253,7 @@ export async function createSession(deviceId) {
       // 🛑 TAMBAHKAN INI: Membantu stabilitas di Replit
       handleSIGINT: false,
       handleSIGTERM: false,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,  
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium', 
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
