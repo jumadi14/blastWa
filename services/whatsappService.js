@@ -1,64 +1,32 @@
+// services/whatsappService.js — Baileys Edition
+import {
+  default as makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+  makeInMemoryStore,
+  downloadMediaMessage,
+} from "@whiskeysockets/baileys";
+import { Boom } from "@hapi/boom";
 import fs from "fs";
 import path from "path";
-import { execSync } from "child_process";
-import pkg from "whatsapp-web.js";
-const { Client, RemoteAuth, MessageMedia } = pkg;
-import qrcode from "qrcode-terminal";
+import pino from "pino";
 import db from "../models/db.js";
-
-// ======================================================
-// 🧹 HELPER: Bersihkan proses Chromium yatim & file lock
-// ======================================================
-function cleanupSessionLocks(deviceId) {
-  const sessionDir = path.join(
-    process.cwd(),
-    "wwebjs_auth",
-    `session-${deviceId}`,
-  );
-
-  try {
-    const pattern = `wwebjs_auth/session-${deviceId}`;
-    const out = execSync(`pgrep -f "${pattern}" || true`, {
-      encoding: "utf8",
-    }).trim();
-    if (out) {
-      const pids = out.split("\n").filter(Boolean);
-      for (const pid of pids) {
-        try {
-          process.kill(parseInt(pid, 10), "SIGKILL");
-          console.log(`🪓 Membunuh chromium yatim PID ${pid} (${deviceId})`);
-        } catch (e) {}
-      }
-    }
-  } catch (e) {}
-
-  try {
-    if (fs.existsSync(sessionDir)) {
-      for (const name of fs.readdirSync(sessionDir)) {
-        if (name.startsWith("Singleton")) {
-          try { fs.unlinkSync(path.join(sessionDir, name)); } catch (_) {}
-        }
-      }
-      const defaultDir = path.join(sessionDir, "Default");
-      if (fs.existsSync(defaultDir)) {
-        for (const name of fs.readdirSync(defaultDir)) {
-          if (name.startsWith("Singleton")) {
-            try { fs.unlinkSync(path.join(defaultDir, name)); } catch (_) {}
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.error(`⚠️ Gagal bersihkan lock ${deviceId}:`, e.message);
-  }
-}
 
 // ======================================================
 // 🔧 SETUP DASAR
 // ======================================================
-const qrCodes = new Map();
-const clients = new Map();
+const clients = new Map();   // deviceId → socket
+const qrCodes = new Map();   // deviceId → qr string
 let io = null;
+
+// Folder tempat simpan session per device
+const AUTH_DIR = path.join(process.cwd(), "baileys_auth");
+if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
+
+// Logger minimal — ganti ke pino() kalau butuh debug penuh
+const logger = pino({ level: "silent" });
 
 // ======================================================
 // 🔌 SOCKET.IO
@@ -73,36 +41,14 @@ export function getWAChatClient(deviceId) {
 }
 
 // ======================================================
-// 🔧 DATABASE SESSION
-// ======================================================
-async function getSessionFromDB(deviceId) {
-  const row = await db.get(
-    `SELECT session_data FROM whatsapp_sessions WHERE device_id = ?`,
-    [deviceId],
-  );
-  return row ? JSON.parse(row.session_data) : null;
-}
-
-async function saveSessionToDB(deviceId, sessionData) {
-  const dataString = JSON.stringify(sessionData);
-  await db.run(
-    `INSERT INTO whatsapp_sessions (device_id, session_data) 
-         VALUES (?, ?) 
-         ON DUPLICATE KEY UPDATE session_data = VALUES(session_data), updated_at = CURRENT_TIMESTAMP`,
-    [deviceId, dataString],
-  );
-}
-
-// ======================================================
 // 🧩 UPDATE STATUS DEVICE
 // ======================================================
 async function updateDeviceStatus(deviceId, newStatus, phoneNumber = null) {
-  const numberToUpdate = phoneNumber ? phoneNumber.split("@")[0] : null;
   try {
-    if (numberToUpdate) {
+    if (phoneNumber) {
       await db.run(
         `UPDATE Devices SET status = ?, phoneNumber = ? WHERE deviceId = ?`,
-        [newStatus, numberToUpdate, deviceId],
+        [newStatus, phoneNumber, deviceId]
       );
     } else {
       await db.run(`UPDATE Devices SET status = ? WHERE deviceId = ?`, [
@@ -110,108 +56,90 @@ async function updateDeviceStatus(deviceId, newStatus, phoneNumber = null) {
         deviceId,
       ]);
     }
-
     console.log(`[DB SUCCESS] Status device ${deviceId} → ${newStatus}`);
-    if (io)
-      io.emit("device-status", {
-        deviceId,
-        status: newStatus,
-        phoneNumber: numberToUpdate,
-      });
+    if (io) io.emit("device-status", { deviceId, status: newStatus, phoneNumber });
   } catch (err) {
-    console.error(
-      `[DB ERROR] Gagal update status device ${deviceId}:`,
-      err.message,
-    );
+    console.error(`[DB ERROR] Gagal update status ${deviceId}:`, err.message);
   }
 }
 
 // ======================================================
-// 💾 SIMPAN PESAN
+// 💾 SIMPAN PESAN MASUK
 // ======================================================
-async function saveInboxMessage(deviceId, message) {
+async function saveInboxMessage(deviceId, msg) {
   try {
-    const contact = await message.getContact();
+    const jid = msg.key.remoteJid || "";
+    if (
+      jid.endsWith("@g.us") ||
+      jid.endsWith("@broadcast") ||
+      jid === "status@broadcast" ||
+      msg.key.fromMe
+    ) return;
 
-    let finalNumber = "";
-    if (contact.number) {
-      finalNumber = contact.number;
-    } else if (message.author) {
-      finalNumber = message.author.split("@")[0].split(":")[0];
-    } else {
-      finalNumber = message.from.split("@")[0].split(":")[0];
-    }
-
-    finalNumber = finalNumber.replace(/\D/g, "");
-
-    const senderName = message._data.notifyName || "";
-    let displayInDb = finalNumber;
-
-    if (finalNumber.length > 15 && senderName) {
-      displayInDb = `${senderName} (${finalNumber.substring(0, 5)}...)`;
-    }
+    // Ambil nomor bersih
+    const fromNumber = jid.split("@")[0].replace(/\D/g, "");
+    const body =
+      msg.message?.conversation ||
+      msg.message?.extendedTextMessage?.text ||
+      msg.message?.imageMessage?.caption ||
+      "[Media]";
 
     await db.run(
       `INSERT INTO Inbox (deviceId, fromNumber, body, timestamp, isRead)
        VALUES (?, ?, ?, ?, 0)`,
-      [deviceId, displayInDb, message.body, Math.floor(Date.now() / 1000)],
+      [deviceId, fromNumber, body, Math.floor(Date.now() / 1000)]
     );
-
-    console.log(`[DB SUCCESS] Masuk dari: ${displayInDb}`);
+    console.log(`[DB SUCCESS] Masuk dari: ${fromNumber}`);
   } catch (err) {
     console.error(`❌ Gagal simpan inbox:`, err.message);
   }
 }
 
-async function saveOutboxMessage(
-  deviceId,
-  toNumber,
-  body,
-  status,
-  msgId,
-  scheduleId = null,
-) {
+// ======================================================
+// 💾 SIMPAN PESAN KELUAR
+// ======================================================
+async function saveOutboxMessage(deviceId, toNumber, body, status, msgId, scheduleId = null) {
   const timestamp = Math.floor(Date.now() / 1000);
   try {
     await db.run(
       `INSERT INTO Messages (deviceId, toNumber, body, timestamp, status, messageId, scheduleId)
        VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE 
+       ON DUPLICATE KEY UPDATE
          status = VALUES(status),
          messageId = VALUES(messageId),
          timestamp = VALUES(timestamp),
          scheduleId = VALUES(scheduleId)`,
-      [deviceId, toNumber, body, timestamp, status, msgId, scheduleId],
+      [deviceId, toNumber, body, timestamp, status, msgId, scheduleId]
     );
-    console.log(`[DB SUCCESS] Outbox ke ${toNumber} berhasil.`);
   } catch (err) {
     console.error(`❌ DB Error: Gagal simpan pesan keluar:`, err.message);
   }
 }
 
 // ======================================================
-// ⚙️ SESSION MANAGEMENT — FIXED
+// ⚙️ CREATE SESSION — CORE FUNCTION
 // ======================================================
 export async function createSession(deviceId) {
-  console.log(`🚀 Menginisialisasi session: ${deviceId}`);
+  console.log(`🚀 Menginisialisasi session Baileys: ${deviceId}`);
 
-  // Cegah duplikat session
+  // Cegah duplikat
   if (clients.has(deviceId)) {
-    console.log(`⚠️ Session ${deviceId} sudah ada, skip.`);
+    console.log(`⚠️ Session ${deviceId} sudah aktif, skip.`);
     return { success: true, deviceId };
   }
 
+  // Setup device di DB
   try {
-    const existingDevice = await db.get(
+    const existing = await db.get(
       `SELECT deviceId FROM Devices WHERE deviceId = ?`,
-      [deviceId],
+      [deviceId]
     );
-    if (!existingDevice) {
+    if (!existing) {
       await db.run(
-        `INSERT INTO Devices (deviceId, status, createdAt) 
-         VALUES (?, ?, ?)
+        `INSERT INTO Devices (deviceId, status, createdAt)
+         VALUES (?, 'initializing', ?)
          ON DUPLICATE KEY UPDATE status = 'initializing'`,
-        [deviceId, "initializing", Math.floor(Date.now() / 1000)],
+        [deviceId, Math.floor(Date.now() / 1000)]
       );
     } else {
       await updateDeviceStatus(deviceId, "initializing");
@@ -220,126 +148,92 @@ export async function createSession(deviceId) {
     console.error(`[DB ERROR] Setup device gagal:`, err.message);
   }
 
-  const client = new Client({
-    authStrategy: new pkg.LocalAuth({
-      clientId: deviceId,
-      dataPath: path.join(process.cwd(), "wwebjs_auth"),
-    }),
-    puppeteer: {
-      headless: true,
-      handleSIGINT: false,
-      handleSIGTERM: false,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
+  // Folder auth per device
+  const deviceAuthDir = path.join(AUTH_DIR, deviceId);
+  if (!fs.existsSync(deviceAuthDir)) fs.mkdirSync(deviceAuthDir, { recursive: true });
 
-      // ✅ FIX UTAMA: Naikkan timeout jadi 120 detik
-      timeout: 120000,
+  const startSocket = async () => {
+    const { state, saveCreds } = await useMultiFileAuthState(deviceAuthDir);
+    const { version } = await fetchLatestBaileysVersion();
 
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--no-first-run",
-        "--no-zygote",
-        // ❌ HAPUS --single-process — ini penyebab ready tidak terpicu!
-        "--disable-gpu",
-        "--disable-extensions",
-        "--disable-background-networking",
-        "--disable-sync",
-        "--no-default-browser-check",
-        "--memory-pressure-off",
-        // ✅ Tambahan untuk stabilitas di server
-        "--disable-web-security",
-        "--allow-running-insecure-content",
-        "--disable-features=IsolateOrigins,site-per-process",
-      ],
-    },
-  });
+    const sock = makeWASocket({
+      version,
+      logger,
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, logger),
+      },
+      printQRInTerminal: true,       // QR tampil di terminal juga
+      browser: ["WA Blast", "Chrome", "1.0.0"],
+      syncFullHistory: false,        // Hemat memory — tidak perlu history lama
+      generateHighQualityLinkPreview: false,
+    });
 
-  // Event: QR Code
-  client.on("qr", (qr) => {
-    console.log(`[QR] Silakan scan QR untuk device: ${deviceId}`);
-    qrcode.generate(qr, { small: true });
-    updateDeviceStatus(deviceId, "QR");
-    if (io) io.emit("qr-code", { deviceId, qr });
-  });
+    clients.set(deviceId, sock);
 
-  // ✅ FIX: Tambah event loading_screen agar status update saat loading
-  client.on("loading_screen", (percent, message) => {
-    console.log(`⏳ ${deviceId} loading: ${percent}% — ${message}`);
-    if (io) io.emit("device-loading", { deviceId, percent, message });
-  });
+    // ── Event: connection.update ───────────────────────
+    sock.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect, qr } = update;
 
-  // Event: Authenticated
-  client.on("authenticated", () => {
-    console.log(`✅ ${deviceId} TERAUTENTIKASI — menunggu ready...`);
-    // ✅ Update status ke 'authenticated' supaya frontend tahu prosesnya jalan
-    updateDeviceStatus(deviceId, "authenticated");
-  });
+      // QR tersedia → kirim ke frontend
+      if (qr) {
+        console.log(`[QR] Device ${deviceId} — scan QR`);
+        qrCodes.set(deviceId, qr);
+        await updateDeviceStatus(deviceId, "QR");
+        if (io) io.emit("qr-code", { deviceId, qr });
+      }
 
-  // Event: Auth Failure
-  client.on("auth_failure", (msg) => {
-    console.error(`❌ ${deviceId} GAGAL OTENTIKASI:`, msg);
-    updateDeviceStatus(deviceId, "disconnected");
-    clients.delete(deviceId);
-  });
-  // Tambahkan ini — tangkap semua event raw
-client.pupPage?.on('console', msg => {
-  console.log(`[BROWSER ${deviceId}]:`, msg.text());
-});
+      if (connection === "close") {
+        const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+        clients.delete(deviceId);
+        qrCodes.delete(deviceId);
 
-client.pupPage?.on('error', err => {
-  console.error(`[BROWSER ERROR ${deviceId}]:`, err.message);
-});
+        console.log(`✖️ ${deviceId} terputus. Reason: ${reason}`);
 
-  // Event: Ready
-  client.on("ready", async () => {
-    console.log(`✅ ${deviceId} DEVICE READY & CONNECTED`);
-    const waNumber = client.info.wid.user;
-    await updateDeviceStatus(deviceId, "READY", waNumber);
-  });
+        // 401 = logged out / session dihapus dari HP
+        if (reason === DisconnectReason.loggedOut) {
+          console.log(`🚫 ${deviceId} logged out. Hapus session lokal.`);
+          await updateDeviceStatus(deviceId, "disconnected");
+          // Hapus folder auth agar scan ulang bersih
+          try {
+            fs.rmSync(deviceAuthDir, { recursive: true, force: true });
+          } catch (_) {}
+          return; // Jangan reconnect
+        }
 
-  // Event: Pesan masuk
-  client.on("message", async (message) => {
-    if (
-      message.from.endsWith("@g.us") ||
-      message.from.endsWith("@broadcast") ||
-      message.isStatus ||
-      message.from.endsWith("@newsletter") ||
-      message.fromMe
-    ) {
-      return;
-    }
-    await saveInboxMessage(deviceId, message);
-  });
+        // Selain loggedOut → reconnect otomatis
+        await updateDeviceStatus(deviceId, "disconnected");
+        console.log(`🔄 Reconnect ${deviceId} dalam 5 detik...`);
+        setTimeout(() => startSocket(), 5000);
+      }
 
-  // Event: Disconnected
-  client.on("disconnected", async (reason) => {
-    console.log(`✖️ ${deviceId} Terputus: ${reason}`);
-    await updateDeviceStatus(deviceId, "disconnected");
-    clients.delete(deviceId);
+      if (connection === "open") {
+        console.log(`✅ ${deviceId} CONNECTED & READY`);
+        qrCodes.delete(deviceId);
+        const phoneNumber = sock.user?.id?.split(":")[0] || sock.user?.id?.split("@")[0] || null;
+        await updateDeviceStatus(deviceId, "READY", phoneNumber);
+      }
+    });
 
-    // ✅ Auto reconnect setelah 10 detik jika terputus
-    console.log(`🔄 Mencoba reconnect ${deviceId} dalam 10 detik...`);
-    setTimeout(() => {
-      createSession(deviceId).catch((e) =>
-        console.error(`❌ Reconnect ${deviceId} gagal:`, e.message)
-      );
-    }, 10000);
-  });
+    // ── Event: simpan credentials ─────────────────────
+    sock.ev.on("creds.update", saveCreds);
 
-  // Event: Error
-  client.on("error", (err) => {
-    console.error(`⚠️ Client error untuk ${deviceId}:`, err?.message || err);
-  });
+    // ── Event: pesan masuk ────────────────────────────
+    sock.ev.on("messages.upsert", async ({ messages, type }) => {
+      if (type !== "notify") return;
+      for (const msg of messages) {
+        await saveInboxMessage(deviceId, msg);
+      }
+    });
+
+    return sock;
+  };
 
   try {
-    cleanupSessionLocks(deviceId);
-    await client.initialize();
-    clients.set(deviceId, client);
+    await startSocket();
     return { success: true, deviceId };
   } catch (err) {
-    console.error(`❌ Gagal initialize ${deviceId}:`, err.message);
+    console.error(`❌ Gagal init ${deviceId}:`, err.message);
     await updateDeviceStatus(deviceId, "disconnected");
     clients.delete(deviceId);
     throw err;
@@ -347,107 +241,99 @@ client.pupPage?.on('error', err => {
 }
 
 // ======================================================
-// 🧾 GET QR CODE
+// 🧾 GET QR CODE (polling max 60 detik)
 // ======================================================
 export async function getQRCode(deviceId) {
-  for (let i = 0; i < 15; i++) {
+  for (let i = 0; i < 30; i++) {
     const qr = qrCodes.get(deviceId);
     if (qr) return qr;
     await new Promise((r) => setTimeout(r, 2000));
   }
-  throw new Error("QR belum tersedia atau sudah expired (timeout).");
+  throw new Error("QR belum tersedia atau sudah expired (timeout 60 detik).");
 }
 
 // ======================================================
-// ✉️ KIRIM PESAN
+// ✉️ KIRIM PESAN (TEXT / IMAGE)
 // ======================================================
 export async function sendMessageService(
   deviceId,
   number,
   message,
   imagePath = null,
-  scheduleId = null,
+  scheduleId = null
 ) {
-  const tempMessageId = Date.now().toString();
-  const formatted = number.includes("@c.us") ? number : `${number}@c.us`;
-  const plainNumber = number.replace("@c.us", "");
+  const tempId = Date.now().toString();
+  // Format nomor: pastikan pakai @s.whatsapp.net
+  const plainNumber = number.replace(/\D/g, "");
+  const jid = plainNumber.includes("@") ? number : `${plainNumber}@s.whatsapp.net`;
 
-  await saveOutboxMessage(
-    deviceId,
-    formatted,
-    message,
-    "PENDING",
-    tempMessageId,
-    scheduleId,
-  );
+  await saveOutboxMessage(deviceId, plainNumber, message, "PENDING", tempId, scheduleId);
 
   try {
-    const client = clients.get(deviceId);
-    if (!client) throw new Error("Device belum aktif atau tidak terhubung.");
+    const sock = clients.get(deviceId);
+    if (!sock) throw new Error("Device belum aktif atau tidak terhubung.");
 
-    const isRegistered = await client.getNumberId(plainNumber);
-    if (!isRegistered) {
+    // Cek apakah nomor terdaftar di WA
+    const [result] = await sock.onWhatsApp(plainNumber);
+    if (!result?.exists) {
       console.warn(`🚫 Nomor ${plainNumber} tidak terdaftar di WhatsApp.`);
       await db.run(`UPDATE Messages SET status = ? WHERE messageId = ?`, [
         "NOT_REGISTERED",
-        tempMessageId,
+        tempId,
       ]);
       return { success: false, message: "Nomor tidak terdaftar di WhatsApp" };
     }
 
-    let absolutePath = imagePath ? path.resolve(imagePath) : null;
-    let response;
+    let sentMsg;
 
-    if (absolutePath && fs.existsSync(absolutePath)) {
-      const ext = path.extname(absolutePath).toLowerCase();
-      let mimeType = "application/octet-stream";
-      if (ext === ".jpg" || ext === ".jpeg") mimeType = "image/jpeg";
-      else if (ext === ".png") mimeType = "image/png";
-      else if (ext === ".webp") mimeType = "image/webp";
-      else mimeType = "image/jpeg";
+    if (imagePath && fs.existsSync(imagePath)) {
+      // Kirim gambar dengan caption
+      const imageBuffer = fs.readFileSync(imagePath);
+      const ext = path.extname(imagePath).toLowerCase();
+      const mimetype = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
 
-      const media = pkg.MessageMedia.fromFilePath(absolutePath);
-      media.mimetype = mimeType;
-      media.filename = `image_${Date.now()}${ext || ".jpg"}`;
-
-      console.log(`🖼️ Mengirim gambar: ${absolutePath} as ${mimeType}`);
-      response = await client.sendMessage(formatted, media, {
+      sentMsg = await sock.sendMessage(jid, {
+        image: imageBuffer,
         caption: message,
+        mimetype,
       });
+      console.log(`🖼️ Gambar terkirim ke ${plainNumber}`);
     } else {
-      console.log(`💬 Mengirim pesan teks murni ke: ${formatted}`);
-      response = await client.sendMessage(formatted, message);
+      // Kirim teks biasa
+      sentMsg = await sock.sendMessage(jid, { text: message });
+      console.log(`💬 Pesan teks terkirim ke ${plainNumber}`);
     }
 
+    const msgId = sentMsg?.key?.id || tempId;
     await db.run(
-      `UPDATE Messages SET status = ?, messageId = ? WHERE messageId = ?`,
-      ["SENT", response.id._serialized, tempMessageId],
+      `UPDATE Messages SET status = 'SENT', messageId = ? WHERE messageId = ?`,
+      [msgId, tempId]
     );
 
     return { success: true, message: "Pesan terkirim" };
   } catch (err) {
-    await db.run(`UPDATE Messages SET status = ? WHERE messageId = ?`, [
-      "FAILED",
-      tempMessageId,
-    ]);
+    await db.run(`UPDATE Messages SET status = 'FAILED' WHERE messageId = ?`, [tempId]);
     console.error(`❌ Gagal kirim ke ${number}:`, err.message);
     throw err;
   }
 }
 
 // ======================================================
-// 🔁 AUTO RECONNECT
+// 🔁 AUTO RECONNECT — dipanggil saat server start
 // ======================================================
 export async function autoReconnectDevices() {
   console.log("♻️ Auto reconnect start...");
-
   try {
     const devices = await listDevices();
-
     for (const d of devices) {
-      // ✅ Skip device yang sudah ada di memory
       if (clients.has(d.deviceId)) {
         console.log(`⏭️ Skip ${d.deviceId} — sudah aktif.`);
+        continue;
+      }
+      // Hanya reconnect device yang punya folder session (pernah login)
+      const deviceAuthDir = path.join(AUTH_DIR, d.deviceId);
+      if (!fs.existsSync(deviceAuthDir)) {
+        console.log(`⏭️ Skip ${d.deviceId} — belum pernah login.`);
         continue;
       }
       try {
@@ -466,46 +352,39 @@ export async function autoReconnectDevices() {
 // ======================================================
 export async function deleteSession(deviceId) {
   try {
-    console.log(`⚠️ Memulai proses penghapusan total device: ${deviceId}`);
+    console.log(`⚠️ Menghapus device: ${deviceId}`);
 
-    const client = clients.get(deviceId);
-
+    // 1. Hapus dari DB dulu
     await db.run(`DELETE FROM Devices WHERE deviceId = ?`, [deviceId]);
-    await db.run(`DELETE FROM whatsapp_sessions WHERE device_id = ?`, [
-      deviceId,
-    ]);
+    await db.run(`DELETE FROM whatsapp_sessions WHERE device_id = ?`, [deviceId]).catch(() => {});
     console.log(`✅ Data ${deviceId} dihapus dari Database.`);
 
-    if (client) {
-      console.log(`🔌 Mematikan koneksi WhatsApp untuk ${deviceId}...`);
+    // 2. Disconnect socket
+    const sock = clients.get(deviceId);
+    if (sock) {
       try {
-        await client.logout();
-        await client.destroy();
-      } catch (logErr) {
-        console.log("Catatan: Client sudah mati sebelum logout.");
-      }
+        await sock.logout();
+      } catch (_) {}
+      try {
+        sock.end();
+      } catch (_) {}
       clients.delete(deviceId);
     }
 
-    cleanupSessionLocks(deviceId);
+    // 3. Hapus folder auth
     setTimeout(() => {
-      const sessionPath = path.join(
-        process.cwd(),
-        "wwebjs_auth",
-        `session-${deviceId}`,
-      );
-      if (fs.existsSync(sessionPath)) {
+      const deviceAuthDir = path.join(AUTH_DIR, deviceId);
+      if (fs.existsSync(deviceAuthDir)) {
         try {
-          fs.rmSync(sessionPath, { recursive: true, force: true });
-          console.log(`📁 Folder fisik ${deviceId} dibersihkan.`);
+          fs.rmSync(deviceAuthDir, { recursive: true, force: true });
+          console.log(`📁 Folder auth ${deviceId} dihapus.`);
         } catch (e) {
           console.error(`⚠️ Gagal hapus folder ${deviceId}:`, e.message);
         }
       }
-    }, 2000);
+    }, 1000);
 
     if (io) io.emit("device-status", { deviceId, status: "DELETED" });
-
     return { success: true };
   } catch (err) {
     console.error(`❌ Gagal hapus session ${deviceId}:`, err.message);
