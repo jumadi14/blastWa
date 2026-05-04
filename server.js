@@ -44,7 +44,7 @@ const HOST = "0.0.0.0";
 // HAPUS cors() lama, ganti dengan blok ini
 app.use((req, res, next) => {
   // Daftar domain yang diizinkan (Localhost & Domain Asli)
-  const allowedOrigins = ["http://localhost:5173", "https://wablast.jps.co.id"];
+  const allowedOrigins = ["http://localhost:5173", "https://wablast.jps.co.id", "https://blastwa.jps.co.id"];
 
   const origin = req.headers.origin;
 
