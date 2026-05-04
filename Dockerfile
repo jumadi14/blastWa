@@ -1,7 +1,7 @@
 FROM node:20-slim
 
 RUN apt-get update && apt-get install -y \
-    chromium \
+    git \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
@@ -11,8 +11,6 @@ COPY package*.json ./
 RUN npm install
 
 COPY . .
-
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 EXPOSE 5000
 
