@@ -255,7 +255,8 @@ await db.run(
       // 🛑 TAMBAHKAN INI: Membantu stabilitas di Replit
       handleSIGINT: false,
       handleSIGTERM: false,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium', 
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+      timeout: 60000, 
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -263,7 +264,7 @@ await db.run(
         "--disable-accelerated-2d-canvas",
         "--no-first-run",
         "--no-zygote",
-        // "--single-process", // 👈 COBA MATIKAN BARIS INI (Kadang justru bikin crash di Replit baru)
+         "--single-process", // 👈 COBA MATIKAN BARIS INI (Kadang justru bikin crash di Replit baru)
         "--disable-gpu",
       ],
     },
