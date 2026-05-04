@@ -6,11 +6,11 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "npm run dev"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "6.6.0",
+    "@whiskeysockets/baileys": "^6.7.16",
     "axios": "^1.7.4",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
