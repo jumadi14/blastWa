@@ -229,11 +229,13 @@ export async function createSession(deviceId) {
       [deviceId],
     );
     if (!existingDevice) {
-      await db.run(
-        `INSERT INTO Devices (deviceId, status, createdAt) 
-             VALUES (?, ?, ?)`,
-        [deviceId, "initializing", Math.floor(Date.now() / 1000)],
-      );
+      // ✅ FIX - syntax MySQL
+await db.run(
+    `INSERT INTO Devices (deviceId, status, createdAt) 
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE status = 'initializing'`,
+    [deviceId, "initializing", Math.floor(Date.now() / 1000)],
+);
     } else {
       await updateDeviceStatus(deviceId, "initializing");
     }
