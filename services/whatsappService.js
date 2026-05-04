@@ -16,7 +16,6 @@ function cleanupSessionLocks(deviceId) {
     `session-${deviceId}`,
   );
 
-  // 1. Bunuh proses Chromium yang masih memakai profile ini
   try {
     const pattern = `wwebjs_auth/session-${deviceId}`;
     const out = execSync(`pgrep -f "${pattern}" || true`, {
@@ -28,32 +27,23 @@ function cleanupSessionLocks(deviceId) {
         try {
           process.kill(parseInt(pid, 10), "SIGKILL");
           console.log(`🪓 Membunuh chromium yatim PID ${pid} (${deviceId})`);
-        } catch (e) {
-          // proses sudah tidak ada
-        }
+        } catch (e) {}
       }
     }
-  } catch (e) {
-    // pgrep tidak tersedia / gagal — abaikan
-  }
+  } catch (e) {}
 
-  // 2. Hapus semua file Singleton* yg menyebabkan "profile in use"
   try {
     if (fs.existsSync(sessionDir)) {
       for (const name of fs.readdirSync(sessionDir)) {
         if (name.startsWith("Singleton")) {
-          try {
-            fs.unlinkSync(path.join(sessionDir, name));
-          } catch (_) {}
+          try { fs.unlinkSync(path.join(sessionDir, name)); } catch (_) {}
         }
       }
       const defaultDir = path.join(sessionDir, "Default");
       if (fs.existsSync(defaultDir)) {
         for (const name of fs.readdirSync(defaultDir)) {
           if (name.startsWith("Singleton")) {
-            try {
-              fs.unlinkSync(path.join(defaultDir, name));
-            } catch (_) {}
+            try { fs.unlinkSync(path.join(defaultDir, name)); } catch (_) {}
           }
         }
       }
@@ -66,14 +56,8 @@ function cleanupSessionLocks(deviceId) {
 // ======================================================
 // 🔧 SETUP DASAR
 // ======================================================
-
-// Simpan QR Code sementara
 const qrCodes = new Map();
-
-// Simpan client aktif
 const clients = new Map();
-
-// Socket.IO instance
 let io = null;
 
 // ======================================================
@@ -89,10 +73,8 @@ export function getWAChatClient(deviceId) {
 }
 
 // ======================================================
-// 🔧 SETUP DATABASE SESSION STORAGE (CUSTOM)
+// 🔧 DATABASE SESSION
 // ======================================================
-
-// Fungsi untuk mengambil session dari DB
 async function getSessionFromDB(deviceId) {
   const row = await db.get(
     `SELECT session_data FROM whatsapp_sessions WHERE device_id = ?`,
@@ -101,7 +83,6 @@ async function getSessionFromDB(deviceId) {
   return row ? JSON.parse(row.session_data) : null;
 }
 
-// Fungsi untuk simpan/update session ke DB
 async function saveSessionToDB(deviceId, sessionData) {
   const dataString = JSON.stringify(sessionData);
   await db.run(
@@ -146,32 +127,23 @@ async function updateDeviceStatus(deviceId, newStatus, phoneNumber = null) {
 }
 
 // ======================================================
-// 💾 SIMPAN PESAN (INBOX & OUTBOX)
+// 💾 SIMPAN PESAN
 // ======================================================
 async function saveInboxMessage(deviceId, message) {
   try {
-    // 1. Ambil kontak secara paksa dari library
     const contact = await message.getContact();
 
-    // 2. Logika pencarian nomor (Cari dari yang paling akurat)
     let finalNumber = "";
-
     if (contact.number) {
-      // Prioritas 1: Nomor HP asli dari objek kontak
       finalNumber = contact.number;
     } else if (message.author) {
-      // Prioritas 2: Author (biasanya muncul di grup atau enkripsi baru)
       finalNumber = message.author.split("@")[0].split(":")[0];
     } else {
-      // Prioritas 3: Ambil dari ID remote, tapi bersihkan karakternya
       finalNumber = message.from.split("@")[0].split(":")[0];
     }
 
-    // Bersihkan dari semua karakter non-angka (biar sisa 628xxx saja)
     finalNumber = finalNumber.replace(/\D/g, "");
 
-    // 3. JAGA-JAGA: Kalau nomor tetap ID panjang (LID),
-    // kita tambahkan Nama di depannya supaya kamu kenal
     const senderName = message._data.notifyName || "";
     let displayInDb = finalNumber;
 
@@ -216,26 +188,31 @@ async function saveOutboxMessage(
     console.error(`❌ DB Error: Gagal simpan pesan keluar:`, err.message);
   }
 }
+
 // ======================================================
-// ⚙️ SESSION MANAGEMENT (FIXED FOR REPLIT)
+// ⚙️ SESSION MANAGEMENT — FIXED
 // ======================================================
 export async function createSession(deviceId) {
   console.log(`🚀 Menginisialisasi session: ${deviceId}`);
 
-  // 1. Database Setup (Status Awal)
+  // Cegah duplikat session
+  if (clients.has(deviceId)) {
+    console.log(`⚠️ Session ${deviceId} sudah ada, skip.`);
+    return { success: true, deviceId };
+  }
+
   try {
     const existingDevice = await db.get(
       `SELECT deviceId FROM Devices WHERE deviceId = ?`,
       [deviceId],
     );
     if (!existingDevice) {
-      // ✅ FIX - syntax MySQL
-await db.run(
-    `INSERT INTO Devices (deviceId, status, createdAt) 
+      await db.run(
+        `INSERT INTO Devices (deviceId, status, createdAt) 
          VALUES (?, ?, ?)
          ON DUPLICATE KEY UPDATE status = 'initializing'`,
-    [deviceId, "initializing", Math.floor(Date.now() / 1000)],
-);
+        [deviceId, "initializing", Math.floor(Date.now() / 1000)],
+      );
     } else {
       await updateDeviceStatus(deviceId, "initializing");
     }
@@ -243,8 +220,6 @@ await db.run(
     console.error(`[DB ERROR] Setup device gagal:`, err.message);
   }
 
-  // 2. Setup Client dengan Path Permanen
-  // Gunakan 'wwebjs_auth' agar tidak dianggap file temporary oleh Replit
   const client = new Client({
     authStrategy: new pkg.LocalAuth({
       clientId: deviceId,
@@ -252,25 +227,31 @@ await db.run(
     }),
     puppeteer: {
       headless: true,
-      // 🛑 TAMBAHKAN INI: Membantu stabilitas di Replit
       handleSIGINT: false,
       handleSIGTERM: false,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-      timeout: 60000, 
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
+
+      // ✅ FIX UTAMA: Naikkan timeout jadi 120 detik
+      timeout: 120000,
+
       args: [
-         "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-dev-shm-usage",
-    "--disable-accelerated-2d-canvas",
-    "--no-first-run",
-    "--no-zygote",
-    "--single-process",
-    "--disable-gpu",
-    "--disable-extensions",        // ✅ tambah ini
-    "--disable-background-networking", // ✅ tambah ini
-    "--disable-sync",              // ✅ tambah ini
-    "--no-default-browser-check",  // ✅ tambah ini
-    "--memory-pressure-off",       // ✅ tambah ini
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-accelerated-2d-canvas",
+        "--no-first-run",
+        "--no-zygote",
+        // ❌ HAPUS --single-process — ini penyebab ready tidak terpicu!
+        "--disable-gpu",
+        "--disable-extensions",
+        "--disable-background-networking",
+        "--disable-sync",
+        "--no-default-browser-check",
+        "--memory-pressure-off",
+        // ✅ Tambahan untuk stabilitas di server
+        "--disable-web-security",
+        "--allow-running-insecure-content",
+        "--disable-features=IsolateOrigins,site-per-process",
       ],
     },
   });
@@ -283,21 +264,29 @@ await db.run(
     if (io) io.emit("qr-code", { deviceId, qr });
   });
 
-  // Event: Authenticated
-  client.on("authenticated", () => {
-    console.log(`✅ ${deviceId} TERAUTENTIKASI (Session disimpan ke disk)`);
+  // ✅ FIX: Tambah event loading_screen agar status update saat loading
+  client.on("loading_screen", (percent, message) => {
+    console.log(`⏳ ${deviceId} loading: ${percent}% — ${message}`);
+    if (io) io.emit("device-loading", { deviceId, percent, message });
   });
 
-  // Event: Auth Failure (PENTING: Biar tahu kalau session rusak)
+  // Event: Authenticated
+  client.on("authenticated", () => {
+    console.log(`✅ ${deviceId} TERAUTENTIKASI — menunggu ready...`);
+    // ✅ Update status ke 'authenticated' supaya frontend tahu prosesnya jalan
+    updateDeviceStatus(deviceId, "authenticated");
+  });
+
+  // Event: Auth Failure
   client.on("auth_failure", (msg) => {
     console.error(`❌ ${deviceId} GAGAL OTENTIKASI:`, msg);
     updateDeviceStatus(deviceId, "disconnected");
+    clients.delete(deviceId);
   });
 
   // Event: Ready
   client.on("ready", async () => {
     console.log(`✅ ${deviceId} DEVICE READY & CONNECTED`);
-    // Simpan nomor WA ke DB agar status sinkron
     const waNumber = client.info.wid.user;
     await updateDeviceStatus(deviceId, "READY", waNumber);
   });
@@ -320,26 +309,31 @@ await db.run(
   client.on("disconnected", async (reason) => {
     console.log(`✖️ ${deviceId} Terputus: ${reason}`);
     await updateDeviceStatus(deviceId, "disconnected");
+    clients.delete(deviceId);
+
+    // ✅ Auto reconnect setelah 10 detik jika terputus
+    console.log(`🔄 Mencoba reconnect ${deviceId} dalam 10 detik...`);
+    setTimeout(() => {
+      createSession(deviceId).catch((e) =>
+        console.error(`❌ Reconnect ${deviceId} gagal:`, e.message)
+      );
+    }, 10000);
   });
 
-  // Event: Error (PENTING agar error async dari Puppeteer/WhatsApp
-  // tidak naik jadi unhandled error & mematikan seluruh backend).
+  // Event: Error
   client.on("error", (err) => {
     console.error(`⚠️ Client error untuk ${deviceId}:`, err?.message || err);
   });
 
-  // 3. Eksekusi Initialization
   try {
-    // Bunuh proses Chromium yatim & hapus semua file lock untuk
-    // mencegah error "profile appears to be in use" (Code 21)
     cleanupSessionLocks(deviceId);
-
     await client.initialize();
     clients.set(deviceId, client);
     return { success: true, deviceId };
   } catch (err) {
     console.error(`❌ Gagal initialize ${deviceId}:`, err.message);
     await updateDeviceStatus(deviceId, "disconnected");
+    clients.delete(deviceId);
     throw err;
   }
 }
@@ -357,14 +351,14 @@ export async function getQRCode(deviceId) {
 }
 
 // ======================================================
-// ✉️ KIRIM PESAN (TEXT / IMAGE) + VALIDASI NOMOR WA (FIX: BIN IMAGE BUG)
+// ✉️ KIRIM PESAN
 // ======================================================
 export async function sendMessageService(
   deviceId,
   number,
   message,
   imagePath = null,
-  scheduleId = null, // ✅ TAMBAH INI
+  scheduleId = null,
 ) {
   const tempMessageId = Date.now().toString();
   const formatted = number.includes("@c.us") ? number : `${number}@c.us`;
@@ -377,7 +371,7 @@ export async function sendMessageService(
     "PENDING",
     tempMessageId,
     scheduleId,
-  ); // ✅ TAMBAH scheduleId
+  );
 
   try {
     const client = clients.get(deviceId);
@@ -432,8 +426,9 @@ export async function sendMessageService(
     throw err;
   }
 }
+
 // ======================================================
-// 🔁 AUTO RECONNECT (FINAL)
+// 🔁 AUTO RECONNECT
 // ======================================================
 export async function autoReconnectDevices() {
   console.log("♻️ Auto reconnect start...");
@@ -442,8 +437,12 @@ export async function autoReconnectDevices() {
     const devices = await listDevices();
 
     for (const d of devices) {
+      // ✅ Skip device yang sudah ada di memory
+      if (clients.has(d.deviceId)) {
+        console.log(`⏭️ Skip ${d.deviceId} — sudah aktif.`);
+        continue;
+      }
       try {
-        // ❌ JANGAN SET INITIATING LAGI
         await createSession(d.deviceId);
       } catch (err) {
         console.error(`❌ Gagal reconnect ${d.deviceId}:`, err.message);
@@ -461,11 +460,8 @@ export async function deleteSession(deviceId) {
   try {
     console.log(`⚠️ Memulai proses penghapusan total device: ${deviceId}`);
 
-    // 1. Ambil client dari memory
     const client = clients.get(deviceId);
 
-    // 2. WAJIB: Hapus dulu dari database SEBELUM hapus folder
-    // Biar kalau NPM restart, autoReconnect nggak nemu data ini lagi
     await db.run(`DELETE FROM Devices WHERE deviceId = ?`, [deviceId]);
     await db.run(`DELETE FROM whatsapp_sessions WHERE device_id = ?`, [
       deviceId,
@@ -474,7 +470,6 @@ export async function deleteSession(deviceId) {
 
     if (client) {
       console.log(`🔌 Mematikan koneksi WhatsApp untuk ${deviceId}...`);
-      // Gunakan logout() agar session di server WA juga diputus
       try {
         await client.logout();
         await client.destroy();
@@ -484,7 +479,6 @@ export async function deleteSession(deviceId) {
       clients.delete(deviceId);
     }
 
-    // 3. Bunuh proses Chromium yatim untuk device ini, lalu hapus folder fisik
     cleanupSessionLocks(deviceId);
     setTimeout(() => {
       const sessionPath = path.join(
@@ -510,6 +504,7 @@ export async function deleteSession(deviceId) {
     throw err;
   }
 }
+
 // ======================================================
 // 📋 LIST DEVICE
 // ======================================================
