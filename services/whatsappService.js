@@ -258,14 +258,19 @@ await db.run(
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
       timeout: 60000, 
       args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--no-first-run",
-        "--no-zygote",
-         "--single-process", // 👈 COBA MATIKAN BARIS INI (Kadang justru bikin crash di Replit baru)
-        "--disable-gpu",
+         "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-accelerated-2d-canvas",
+    "--no-first-run",
+    "--no-zygote",
+    "--single-process",
+    "--disable-gpu",
+    "--disable-extensions",        // ✅ tambah ini
+    "--disable-background-networking", // ✅ tambah ini
+    "--disable-sync",              // ✅ tambah ini
+    "--no-default-browser-check",  // ✅ tambah ini
+    "--memory-pressure-off",       // ✅ tambah ini
       ],
     },
   });
