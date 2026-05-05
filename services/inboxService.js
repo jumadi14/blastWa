@@ -11,12 +11,15 @@ import db from "../models/db.js";
  * @param {string|undefined} status - Filter isRead ('0' atau '1')
  */
 export const getGroupedInboxMessages = async (deviceId, allowedDeviceIds, status) => {
-    if (!allowedDeviceIds || allowedDeviceIds.length === 0) return [];
+    const whereClauses = [];
+    const params = [];
 
-    const placeholders = allowedDeviceIds.map(() => "?").join(",");
-    
-    const whereClauses = [`T1.deviceId IN (${placeholders})`];
-    const params = [...allowedDeviceIds];
+    // Kalau allowedDeviceIds null = superuser, tidak perlu filter device
+    if (allowedDeviceIds && allowedDeviceIds.length > 0) {
+        const placeholders = allowedDeviceIds.map(() => "?").join(",");
+        whereClauses.push(`T1.deviceId IN (${placeholders})`);
+        params.push(...allowedDeviceIds);
+    }
 
     if (deviceId) {
         whereClauses.push("T1.deviceId = ?");
@@ -28,34 +31,36 @@ export const getGroupedInboxMessages = async (deviceId, allowedDeviceIds, status
         params.push(status);
     }
 
-    const whereClauseString = "WHERE " + whereClauses.join(" AND ");
+    const whereClauseString = whereClauses.length > 0 ? "WHERE " + whereClauses.join(" AND ") : "";
 
     try {
         const sql = `
-    SELECT T1.id, T1.deviceId, T1.fromNumber, T1.body, 
-           T1.timestamp * 1000 AS timestampMs, T1.isRead
-    FROM Inbox T1
-    INNER JOIN (
-        SELECT fromNumber, MAX(id) AS maxId
-        FROM Inbox
-        WHERE deviceId IN (${placeholders})
-        GROUP BY fromNumber
-    ) T2 ON T1.id = T2.maxId
-    ${whereClauseString}
-    ORDER BY T1.timestamp DESC;
-`;
+            SELECT T1.id, T1.deviceId, T1.fromNumber, T1.body, 
+                   T1.timestamp * 1000 AS timestampMs, T1.isRead
+            FROM Inbox T1
+            INNER JOIN (
+                SELECT fromNumber, MAX(id) AS maxId
+                FROM Inbox
+                ${allowedDeviceIds && allowedDeviceIds.length > 0 
+                    ? `WHERE deviceId IN (${allowedDeviceIds.map(() => "?").join(",")})` 
+                    : ""}
+                GROUP BY fromNumber
+            ) T2 ON T1.id = T2.maxId
+            ${whereClauseString}
+            ORDER BY T1.timestamp DESC;
+        `;
 
-        // Subquery params + where params
-        const allParams = [...allowedDeviceIds, ...params];
-        const rows = await db.all(sql, allParams);
+        const subqueryParams = allowedDeviceIds && allowedDeviceIds.length > 0 
+            ? [...allowedDeviceIds] 
+            : [];
+            
+        const rows = await db.all(sql, [...subqueryParams, ...params]);
         return rows;
     } catch (err) {
         console.error("❌ DB Error: Gagal ambil Grouped Inbox:", err.message);
         return [];
     }
 };
-
-
 // --- FUNGSI 2: CONVERSATION / CHAT DETAIL (Inbox + Sent) ---
 
 export const getConversationByNumber = async (fromNumber) => {
