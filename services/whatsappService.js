@@ -134,7 +134,11 @@ async function updateDeviceStatus(deviceId, newStatus, phoneNumber = null) {
 // 💾 SIMPAN PESAN MASUK
 // ======================================================
 async function saveInboxMessage(deviceId, msg) {
-  try {
+  console.log("=== CEK ISI PESAN LENGKAP ===");
+  console.log(JSON.stringify(msg, null, 2)); 
+  console.log("=============================");
+  
+      try {
     const jid = msg.key.remoteJid || "";
     
     // Filter broadcast & grup
