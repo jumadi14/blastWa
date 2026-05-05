@@ -1,10 +1,13 @@
 // services/whatsappService.js — Baileys Edition
-import makeWASocket, {
+import baileys from "@whiskeysockets/baileys";
+
+const {
+  default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-} from "@whiskeysockets/baileys";
+} = baileys;
 import { Boom } from "@hapi/boom";
 import fs from "fs";
 import path from "path";
