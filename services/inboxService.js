@@ -32,19 +32,18 @@ export const getGroupedInboxMessages = async (deviceId, allowedDeviceIds, status
 
     try {
         const sql = `
-            SELECT T1.id, T1.deviceId, T1.fromNumber, T1.body, 
-                   T1.timestamp * 1000 AS timestampMs, T1.isRead
-            FROM Inbox T1
-            INNER JOIN (
-                SELECT fromNumber, MAX(timestamp) AS latestTimestamp
-                FROM Inbox
-                WHERE deviceId IN (${placeholders})
-                GROUP BY fromNumber
-            ) T2 ON T1.fromNumber = T2.fromNumber 
-                AND T1.timestamp = T2.latestTimestamp
-            ${whereClauseString}
-            ORDER BY T1.timestamp DESC;
-        `;
+    SELECT T1.id, T1.deviceId, T1.fromNumber, T1.body, 
+           T1.timestamp * 1000 AS timestampMs, T1.isRead
+    FROM Inbox T1
+    INNER JOIN (
+        SELECT fromNumber, MAX(id) AS maxId
+        FROM Inbox
+        WHERE deviceId IN (${placeholders})
+        GROUP BY fromNumber
+    ) T2 ON T1.id = T2.maxId
+    ${whereClauseString}
+    ORDER BY T1.timestamp DESC;
+`;
 
         // Subquery params + where params
         const allParams = [...allowedDeviceIds, ...params];
