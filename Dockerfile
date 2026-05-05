@@ -1,8 +1,8 @@
 FROM node:20-slim
 
+# install build tools (buat libsignal dll)
 RUN apt-get update && apt-get install -y \
     git \
-    openssh-client \
     python3 \
     make \
     g++ \
@@ -11,17 +11,15 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY package.json ./
+# copy dependency dulu (biar cache optimal)
+COPY package.json package-lock.json* ./
 
-# hapus baileys
-RUN sed -i '/"@whiskeysockets\/baileys":/d' package.json
-
+# install semua dependency (TERMASUK baileys dari package.json)
 RUN npm install --legacy-peer-deps
 
-# install baileys
-RUN npm install https://registry.npmjs.org/@whiskeysockets/baileys/-/baileys-6.7.16.tgz --legacy-peer-deps
-
+# copy source code
 COPY . .
 
 EXPOSE 5000
+
 CMD ["node", "server.js"]
