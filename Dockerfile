@@ -1,32 +1,34 @@
 FROM node:20-slim
 
+# 1. Install git & build tools (penting buat compile library WA)
 RUN apt-get update && apt-get install -y \
     git \
+    python3 \
+    make \
+    g++ \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# KONFIGURASI KRUSIAL: Memaksa Git mengganti protokol di level sistem paling dalam
+# 2. Paksa Git ganti semua SSH ke HTTPS di level sistem
 RUN git config --global url."https://github.com/".insteadOf ssh://git@github.com/ && \
     git config --global url."https://github.com/".insteadOf git@github.com: && \
-    git config --global url."https://github.com/".insteadOf git://github.com/
+    git config --global url."https://github.com/".insteadOf git://
 
 WORKDIR /app
 
+# 3. Copy package files
 COPY package*.json ./
 
-# Hapus sisa-sisa yang mungkin bikin error
-RUN rm -rf node_modules package-lock.json
+# 4. JURUS KUNCI: Paksa ganti string SSH di dalam package-lock.json (jika ada)
+# dan bersihkan sisa-sisa install yang gagal
+RUN if [ -f package-lock.json ]; then \
+    sed -i 's/ssh:\/\/git@github.com/https:\/\/github.com/g' package-lock.json; \
+    fi
 
-# PAKAI ENV INI: Memaksa npm menggunakan HTTPS untuk semua git repository
-# dan mengabaikan SSH sepenuhnya saat instalasi
-ENV GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"
-
-# Kita coba ganti semua ssh:// menjadi https:// di package.json secara paksa sebelum install
-RUN sed -i 's/git+ssh:\/\/git@github.com/https:\/\/github.com/g' package.json && \
-    sed -i 's/ssh:\/\/git@github.com/https:\/\/github.com/g' package.json
-
+# 5. Jalankan install dengan flag tambahan untuk bypass masalah peer-deps
 RUN npm install --legacy-peer-deps
 
+# 6. Copy sisanya
 COPY . .
 
 ENV PORT=5000
