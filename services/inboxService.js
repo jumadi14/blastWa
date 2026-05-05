@@ -13,49 +13,42 @@ import db from "../models/db.js";
 export const getGroupedInboxMessages = async (deviceId, allowedDeviceIds, status) => {
     if (!allowedDeviceIds || allowedDeviceIds.length === 0) return [];
 
-    const whereClauses = [];
-    const params = [];
+    const placeholders = allowedDeviceIds.map(() => "?").join(",");
+    
+    const whereClauses = [`T1.deviceId IN (${placeholders})`];
+    const params = [...allowedDeviceIds];
 
-    // Filter deviceId dari query param
     if (deviceId) {
         whereClauses.push("T1.deviceId = ?");
         params.push(deviceId);
     }
 
-    // Filter deviceId yang boleh diakses user
-    if (allowedDeviceIds.length > 0) {
-        const placeholders = allowedDeviceIds.map(() => "?").join(",");
-        whereClauses.push(`T1.deviceId IN (${placeholders})`);
-        params.push(...allowedDeviceIds);
-    }
-
-    // Filter status isRead
     if (status === '0' || status === '1') {
         whereClauses.push("T1.isRead = ?");
         params.push(status);
     }
 
-    const whereClauseString = whereClauses.length > 0 ? "WHERE " + whereClauses.join(" AND ") : "";
+    const whereClauseString = "WHERE " + whereClauses.join(" AND ");
 
     try {
         const sql = `
-            SELECT T1.id, T1.deviceId, T1.fromNumber, T1.body, T1.timestamp * 1000 AS timestampMs, T1.isRead
+            SELECT T1.id, T1.deviceId, T1.fromNumber, T1.body, 
+                   T1.timestamp * 1000 AS timestampMs, T1.isRead
             FROM Inbox T1
             INNER JOIN (
                 SELECT fromNumber, MAX(timestamp) AS latestTimestamp
                 FROM Inbox
-                ${allowedDeviceIds.length > 0 ? `WHERE deviceId IN (${allowedDeviceIds.map(() => "?").join(",")})` : ""}
+                WHERE deviceId IN (${placeholders})
                 GROUP BY fromNumber
-            ) T2
-            ON T1.fromNumber = T2.fromNumber AND T1.timestamp = T2.latestTimestamp
+            ) T2 ON T1.fromNumber = T2.fromNumber 
+                AND T1.timestamp = T2.latestTimestamp
             ${whereClauseString}
             ORDER BY T1.timestamp DESC;
         `;
 
-        // params tambahan untuk subquery device filter
-        const subqueryParams = allowedDeviceIds.length > 0 ? [...allowedDeviceIds] : [];
-        const rows = await db.all(sql, [...subqueryParams, ...params]);
-
+        // Subquery params + where params
+        const allParams = [...allowedDeviceIds, ...params];
+        const rows = await db.all(sql, allParams);
         return rows;
     } catch (err) {
         console.error("❌ DB Error: Gagal ambil Grouped Inbox:", err.message);
