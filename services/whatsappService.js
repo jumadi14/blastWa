@@ -147,18 +147,20 @@ async function saveInboxMessage(deviceId, msg) {
 
     // ✅ Kalau LID, coba lookup nomor asli via onWhatsApp
     if (jid.endsWith("@lid")) {
-      try {
-        const sock = clients.get(deviceId);
-        if (sock) {
-          const [contact] = await sock.onWhatsApp(jid);
-          if (contact?.jid) {
-            fromNumber = contact.jid.split("@")[0];
-          }
-        }
-      } catch (e) {
-        console.warn(`⚠️ Gagal lookup LID ${jid}:`, e.message);
+  try {
+    const sock = clients.get(deviceId);
+    if (sock) {
+      console.log(`🔍 Lookup LID: ${jid}`);
+      const [contact] = await sock.onWhatsApp(jid);
+      console.log(`🔍 Result:`, JSON.stringify(contact));
+      if (contact?.jid) {
+        fromNumber = contact.jid.split("@")[0];
       }
     }
+  } catch (e) {
+    console.warn(`⚠️ Gagal lookup LID ${jid}:`, e.message);
+  }
+}
 
     fromNumber = fromNumber.replace(/\D/g, "");
     if (fromNumber.startsWith("0")) fromNumber = "62" + fromNumber.slice(1);
