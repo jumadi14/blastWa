@@ -604,10 +604,10 @@ export const getScheduleDetails = async (req, res) => {
         let deviceFilter = "";
         if (user.role !== "superuser" && user.deviceIds.length > 0) {
             const devices = user.deviceIds.map((d) => `'${d}'`).join(",");
-            deviceFilter = `AND deviceId IN (${devices})`;
+            deviceFilter = `AND Schedules.deviceId IN (${devices})`;
         }
 
-        const finalTimeFilter = timeFilter.replace("timestamp", "createdAt");
+        const finalTimeFilter = timeFilter.replace("timestamp", "Schedules.createdAt");
 
         const whereClauses = [];
         if (finalTimeFilter) whereClauses.push(finalTimeFilter);
