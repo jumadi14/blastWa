@@ -55,7 +55,7 @@ const getUserDataFromDb = async (userId) => {
     const devicesRows = await db.all(
         `SELECT d.deviceId 
          FROM UserDevices ud
-         JOIN Devices d ON ud.device_id = d.id
+         JOIN Devices d ON ud.device_id = d.deviceId
          WHERE ud.user_id = ?`,
         [userId],
     );
