@@ -76,12 +76,32 @@ async function saveInboxMessage(deviceId, msg) {
       msg.key.fromMe
     ) return;
 
-    // Ambil nomor bersih
-    const fromNumber = jid.split("@")[0].replace(/\D/g, "");
+    // ✅ Ambil nomor dari pushName/verifiedBizName atau JID
+    let fromNumber = jid.split("@")[0];
+
+    // Kalau LID (angka panjang > 15 digit), coba ambil dari sumber lain
+    if (fromNumber.replace(/\D/g, "").length > 15) {
+      // Coba dari notify name atau participant
+      const participant = msg.key.participant?.split("@")[0];
+      if (participant) {
+        fromNumber = participant;
+      }
+    }
+
+    // Bersihkan jadi angka saja
+    fromNumber = fromNumber.replace(/\D/g, "");
+
+    // Konversi 0xxx → 62xxx
+    if (fromNumber.startsWith("0")) {
+      fromNumber = "62" + fromNumber.slice(1);
+    }
+
     const body =
       msg.message?.conversation ||
       msg.message?.extendedTextMessage?.text ||
       msg.message?.imageMessage?.caption ||
+      msg.message?.videoMessage?.caption ||
+      msg.message?.documentMessage?.caption ||
       "[Media]";
 
     await db.run(
@@ -94,7 +114,6 @@ async function saveInboxMessage(deviceId, msg) {
     console.error(`❌ Gagal simpan inbox:`, err.message);
   }
 }
-
 // ======================================================
 // 💾 SIMPAN PESAN KELUAR
 // ======================================================
