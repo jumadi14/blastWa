@@ -22,7 +22,7 @@ import db from "../models/db.js";
 const clients = new Map();
 const qrCodes = new Map();
 let io = null;
-const logger = pino({ level: "silent" });
+const logger = pino({ level: "debug" });
 
 // ======================================================
 // 🔌 SOCKET.IO
