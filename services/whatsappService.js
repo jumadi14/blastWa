@@ -144,10 +144,23 @@ async function saveInboxMessage(deviceId, msg) {
     ) return;
 
     let fromNumber = jid.split("@")[0];
+
+    // ✅ Kalau LID (angka > 15 digit), coba ambil dari berbagai sumber
     if (fromNumber.replace(/\D/g, "").length > 15) {
+      // Coba dari participant
       const participant = msg.key.participant?.split("@")[0];
-      if (participant) fromNumber = participant;
+      // Coba dari verifiedBizName atau pushName (nama kontak)
+      const pushName = msg.pushName || "";
+      
+      if (participant && participant.replace(/\D/g, "").length <= 15) {
+        fromNumber = participant;
+      } else {
+        // Log untuk debug
+        console.warn(`⚠️ LID detected: ${fromNumber}, pushName: ${pushName}`);
+        // Simpan apa adanya, minimal ada data
+      }
     }
+
     fromNumber = fromNumber.replace(/\D/g, "");
     if (fromNumber.startsWith("0")) fromNumber = "62" + fromNumber.slice(1);
 
@@ -169,7 +182,6 @@ async function saveInboxMessage(deviceId, msg) {
     console.error(`❌ Gagal simpan inbox:`, err.message);
   }
 }
-
 // ======================================================
 // 💾 SIMPAN PESAN KELUAR
 // ======================================================
