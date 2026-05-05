@@ -136,6 +136,8 @@ async function updateDeviceStatus(deviceId, newStatus, phoneNumber = null) {
 async function saveInboxMessage(deviceId, msg) {
   try {
     const jid = msg.key.remoteJid || "";
+    
+    // Filter broadcast & grup
     if (
       jid.endsWith("@g.us") ||
       jid.endsWith("@broadcast") ||
@@ -143,27 +145,40 @@ async function saveInboxMessage(deviceId, msg) {
       msg.key.fromMe
     ) return;
 
-    let fromNumber = jid.split("@")[0];
+    let fromNumber = "";
 
-    // ✅ Kalau LID, coba lookup nomor asli via onWhatsApp
-    if (jid.endsWith("@lid")) {
-  try {
-    const sock = clients.get(deviceId);
-    if (sock) {
-      console.log(`🔍 Lookup LID: ${jid}`);
-      const [contact] = await sock.onWhatsApp(jid);
-      console.log(`🔍 Result:`, JSON.stringify(contact));
-      if (contact?.jid) {
-        fromNumber = contact.jid.split("@")[0];
+    // 1. Coba ambil dari remoteJid dulu
+    if (jid.endsWith("@s.whatsapp.net")) {
+      fromNumber = jid.split("@")[0];
+    } 
+    // 2. Kalau LID, coba cari alternatif
+    else if (jid.endsWith("@lid")) {
+      // Coba cek di metadata pesan, kadang ada info pengirim asli
+      // Jika pakai onWhatsApp:
+      try {
+        const sock = clients.get(deviceId);
+        if (sock) {
+          // Tip: Gunakan cache biar gak lookup terus-menerus (bikin lemot)
+          const [contact] = await sock.onWhatsApp(jid);
+          if (contact && contact.exists) {
+            fromNumber = contact.jid.split("@")[0];
+          } else {
+            // Kalau gagal, terpaksa simpan ID LID-nya dulu biar gak ilang pesannya
+            fromNumber = jid.split("@")[0];
+          }
+        }
+      } catch (e) {
+        fromNumber = jid.split("@")[0];
       }
     }
-  } catch (e) {
-    console.warn(`⚠️ Gagal lookup LID ${jid}:`, e.message);
-  }
-}
 
+    // Pembersihan nomor
     fromNumber = fromNumber.replace(/\D/g, "");
-    if (fromNumber.startsWith("0")) fromNumber = "62" + fromNumber.slice(1);
+    
+    // Normalisasi nomor Indonesia
+    if (fromNumber.startsWith("0")) {
+        fromNumber = "62" + fromNumber.slice(1);
+    }
 
     const body =
       msg.message?.conversation ||
@@ -173,11 +188,13 @@ async function saveInboxMessage(deviceId, msg) {
       msg.message?.documentMessage?.caption ||
       "[Media]";
 
+    // Simpan ke DB
     await db.run(
       `INSERT INTO Inbox (deviceId, fromNumber, body, timestamp, isRead)
        VALUES (?, ?, ?, ?, 0)`,
       [deviceId, fromNumber, body, Math.floor(Date.now() / 1000)]
     );
+    
     console.log(`[DB SUCCESS] Masuk dari: ${fromNumber}`);
   } catch (err) {
     console.error(`❌ Gagal simpan inbox:`, err.message);
