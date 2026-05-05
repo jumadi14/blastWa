@@ -1,8 +1,8 @@
 FROM node:20-slim
 
-# install build tools (buat libsignal dll)
 RUN apt-get update && apt-get install -y \
     git \
+    openssh-client \
     python3 \
     make \
     g++ \
@@ -11,13 +11,10 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# copy dependency dulu (biar cache optimal)
 COPY package.json package-lock.json* ./
 
-# install semua dependency (TERMASUK baileys dari package.json)
 RUN npm install --legacy-peer-deps
 
-# copy source code
 COPY . .
 
 EXPOSE 5000
