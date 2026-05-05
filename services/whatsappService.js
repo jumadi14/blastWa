@@ -222,24 +222,29 @@ export async function createSession(deviceId) {
     console.error(`[DB ERROR] Setup device gagal:`, err.message);
   }
 
-  const startSocket = async () => {
-    // ✅ Pakai DB auth state, bukan file
-    const { state, saveCreds } = await useDBAuthState(deviceId);
-    const { version } = await fetchLatestBaileysVersion();
+ const startSocket = async () => {
+  // ✅ Tutup socket lama sebelum buat baru (cegah conflict 440)
+  const oldSock = clients.get(deviceId);
+  if (oldSock) {
+    try { oldSock.end(); } catch (_) {}
+    clients.delete(deviceId);
+  }
 
-    const sock = makeWASocket({
-      version,
-      logger,
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, logger),
-      },
-      printQRInTerminal: true,
-      browser: ["WA Blast", "Chrome", "1.0.0"],
-      syncFullHistory: false,
-      generateHighQualityLinkPreview: false,
-    });
-
+  // ✅ Pakai DB auth state, bukan file
+  const { state, saveCreds } = await useDBAuthState(deviceId);
+  const { version } = await fetchLatestBaileysVersion();
+  const sock = makeWASocket({
+    version,
+    logger,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger),
+    },
+    printQRInTerminal: true,
+    browser: ["WA Blast", "Chrome", "1.0.0"],
+    syncFullHistory: false,
+    generateHighQualityLinkPreview: false,
+  });
     clients.set(deviceId, sock);
 
     sock.ev.on("connection.update", async (update) => {
