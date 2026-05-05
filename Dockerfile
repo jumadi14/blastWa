@@ -9,6 +9,10 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
+# 🔥 PAKSA SSH → HTTPS
+RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+RUN git config --global url."https://github.com/".insteadOf "git@github.com:"
+
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
