@@ -2,28 +2,31 @@ FROM node:20-slim
 
 RUN apt-get update && apt-get install -y \
     git \
-    openssh-client \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Paksa Git pakai HTTPS secara global untuk semua protokol
+# KONFIGURASI KRUSIAL: Memaksa Git mengganti protokol di level sistem paling dalam
 RUN git config --global url."https://github.com/".insteadOf ssh://git@github.com/ && \
     git config --global url."https://github.com/".insteadOf git@github.com: && \
     git config --global url."https://github.com/".insteadOf git://github.com/
 
 WORKDIR /app
 
-# COPY hanya package.json saja (abaikan lock file dulu untuk sementara)
-COPY package.json ./
+COPY package*.json ./
 
-# Hapus paksa jika ada sisa-sisa node_modules atau lock file yang terbawa
+# Hapus sisa-sisa yang mungkin bikin error
 RUN rm -rf node_modules package-lock.json
 
-# Jalankan install. Tanpa package-lock.json, npm akan mencari versi terbaru 
-# via HTTPS sesuai config git di atas.
+# PAKAI ENV INI: Memaksa npm menggunakan HTTPS untuk semua git repository
+# dan mengabaikan SSH sepenuhnya saat instalasi
+ENV GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"
+
+# Kita coba ganti semua ssh:// menjadi https:// di package.json secara paksa sebelum install
+RUN sed -i 's/git+ssh:\/\/git@github.com/https:\/\/github.com/g' package.json && \
+    sed -i 's/ssh:\/\/git@github.com/https:\/\/github.com/g' package.json
+
 RUN npm install --legacy-peer-deps
 
-# Baru copy semua file lainnya
 COPY . .
 
 ENV PORT=5000
