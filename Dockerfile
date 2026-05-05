@@ -10,17 +10,19 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# PAKAI TRIK INI: Kasih tanda bintang di package-lock
-# Artinya: "Copy package.json, dan JIKA ADA, copy juga package-lock.json"
-COPY package.json package-lock.json* ./
-
-# Tambahkan ini supaya Baileys gak error Permission Denied lagi
+# 1. Paksa Git pakai HTTPS (Wajib buat Baileys)
 RUN git config --global url."https://github.com/".insteadOf ssh://git@github.com/
 
-RUN npm install --legacy-peer-deps
+# 2. Copy package.json saja dulu
+COPY package.json ./
 
+# 3. Hapus Baileys dari package.json (biar bersih) lalu install ulang secara manual
+RUN sed -i '/"@whiskeysockets\/baileys":/d' package.json
+RUN npm install --legacy-peer-deps
+RUN npm install @whiskeysockets/baileys@6.7.16 --legacy-peer-deps
+
+# 4. Baru copy semua file project
 COPY . .
 
 EXPOSE 5000
-
 CMD ["node", "server.js"]
