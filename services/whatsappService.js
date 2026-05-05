@@ -336,11 +336,36 @@ export async function createSession(deviceId) {
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
-      if (type !== "notify") return;
-      for (const msg of messages) {
-        await saveInboxMessage(deviceId, msg);
-      }
-    });
+  if (type !== "notify") return;
+  for (const msg of messages) {
+    if (msg.key.fromMe) {
+      // ✅ Pesan keluar dari HP — simpan ke outbox
+      const toJid = msg.key.remoteJid || "";
+      
+      // Skip grup, broadcast, newsletter
+      if (
+        toJid.endsWith("@g.us") ||
+        toJid.endsWith("@broadcast") ||
+        toJid.endsWith("@newsletter") ||
+        toJid.endsWith("@lid")
+      ) continue;
+      
+      const toNumber = toJid.split("@")[0].replace(/\D/g, "");
+      const body =
+        msg.message?.conversation ||
+        msg.message?.extendedTextMessage?.text ||
+        msg.message?.imageMessage?.caption ||
+        msg.message?.videoMessage?.caption ||
+        "[Media]";
+      
+      await saveOutboxMessage(deviceId, toNumber, body, "SENT", msg.key.id);
+      console.log(`[DB SUCCESS] Pesan keluar dari HP ke: ${toNumber}`);
+    } else {
+      // ✅ Pesan masuk
+      await saveInboxMessage(deviceId, msg);
+    }
+  }
+});
 
     return sock;
   };
