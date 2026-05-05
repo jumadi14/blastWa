@@ -22,7 +22,7 @@ import db from "../models/db.js";
 const clients = new Map();
 const qrCodes = new Map();
 let io = null;
-const logger = pino({ level: "debug" });
+const logger = pino({ level: "silent" });
 
 // ======================================================
 // 🔌 SOCKET.IO
@@ -145,19 +145,18 @@ async function saveInboxMessage(deviceId, msg) {
 
     let fromNumber = jid.split("@")[0];
 
-    // ✅ Kalau LID (angka > 15 digit), coba ambil dari berbagai sumber
-    if (fromNumber.replace(/\D/g, "").length > 15) {
-      // Coba dari participant
-      const participant = msg.key.participant?.split("@")[0];
-      // Coba dari verifiedBizName atau pushName (nama kontak)
-      const pushName = msg.pushName || "";
-      
-      if (participant && participant.replace(/\D/g, "").length <= 15) {
-        fromNumber = participant;
-      } else {
-        // Log untuk debug
-        console.warn(`⚠️ LID detected: ${fromNumber}, pushName: ${pushName}`);
-        // Simpan apa adanya, minimal ada data
+    // ✅ Kalau LID, coba lookup nomor asli via onWhatsApp
+    if (jid.endsWith("@lid")) {
+      try {
+        const sock = clients.get(deviceId);
+        if (sock) {
+          const [contact] = await sock.onWhatsApp(jid);
+          if (contact?.jid) {
+            fromNumber = contact.jid.split("@")[0];
+          }
+        }
+      } catch (e) {
+        console.warn(`⚠️ Gagal lookup LID ${jid}:`, e.message);
       }
     }
 
