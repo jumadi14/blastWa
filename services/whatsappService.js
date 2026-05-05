@@ -13,7 +13,6 @@ import fs from "fs";
 import path from "path";
 import pino from "pino";
 import db from "../models/db.js";
-import * as baileys from "@whiskeysockets/baileys";
 console.log("Baileys exports:", Object.keys(baileys));
 // ======================================================
 // 🔧 SETUP DASAR
