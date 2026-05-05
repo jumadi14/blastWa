@@ -21,3 +21,6 @@ uploads/*
 # Temporary/Backup
 models/db (Salin).js
 node_modulessd/
+node_modules
+npm-debug.log
+.git
