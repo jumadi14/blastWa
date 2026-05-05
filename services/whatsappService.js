@@ -270,28 +270,35 @@ export async function createSession(deviceId) {
         if (io) io.emit("qr-code", { deviceId, qr });
       }
 
-      if (connection === "close") {
-        const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-        clients.delete(deviceId);
-        qrCodes.delete(deviceId);
+     if (connection === "close") {
+  const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+  clients.delete(deviceId);
+  qrCodes.delete(deviceId);
 
-        console.log(`✖️ ${deviceId} terputus. Reason: ${reason}`);
+  console.log(`✖️ ${deviceId} terputus. Reason: ${reason}`);
 
-        if (reason === DisconnectReason.loggedOut) {
-          console.log(`🚫 ${deviceId} logged out. Hapus session dari DB.`);
-          await updateDeviceStatus(deviceId, "disconnected");
-          // Hapus semua session keys dari DB
-          await db.run(
-            `DELETE FROM whatsapp_sessions WHERE device_id LIKE ?`,
-            [`${deviceId}:%`]
-          ).catch(() => {});
-          return;
-        }
+  if (reason === DisconnectReason.loggedOut) {
+    console.log(`🚫 ${deviceId} logged out. Hapus session dari DB.`);
+    await updateDeviceStatus(deviceId, "disconnected");
+    await db.run(
+      `DELETE FROM whatsapp_sessions WHERE device_id LIKE ?`,
+      [`${deviceId}:%`]
+    ).catch(() => {});
+    return;
+  }
 
-        await updateDeviceStatus(deviceId, "disconnected");
-        console.log(`🔄 Reconnect ${deviceId} dalam 5 detik...`);
-        setTimeout(() => startSocket(), 5000);
-      }
+  // ✅ Kalau 440 (conflict) — jangan langsung reconnect, tunggu lebih lama
+  if (reason === 440) {
+    console.log(`⚠️ ${deviceId} conflict (440). Tunggu 30 detik sebelum reconnect...`);
+    await updateDeviceStatus(deviceId, "disconnected");
+    setTimeout(() => startSocket(), 30000);
+    return;
+  }
+
+  await updateDeviceStatus(deviceId, "disconnected");
+  console.log(`🔄 Reconnect ${deviceId} dalam 5 detik...`);
+  setTimeout(() => startSocket(), 5000);
+}
 
       if (connection === "open") {
         console.log(`✅ ${deviceId} CONNECTED & READY`);
