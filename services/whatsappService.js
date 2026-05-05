@@ -143,11 +143,12 @@ async function saveInboxMessage(deviceId, msg) {
     
     // Filter broadcast & grup
     if (
-      jid.endsWith("@g.us") ||
-      jid.endsWith("@broadcast") ||
-      jid === "status@broadcast" ||
-      msg.key.fromMe
-    ) return;
+  jid.endsWith("@g.us") ||
+  jid.endsWith("@broadcast") ||
+  jid === "status@broadcast" ||
+  jid.endsWith("@newsletter") ||  
+  msg.key.fromMe
+) return;
 
     let fromNumber = "";
 
