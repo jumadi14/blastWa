@@ -1,31 +1,27 @@
-// services/whatsappService.js — Baileys Edition
+// services/whatsappService.js — Baileys Edition + DB Session Storage
 import baileys from "@whiskeysockets/baileys";
 
 const {
   default: makeWASocket,
-  useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  initAuthCreds,
+  BufferJSON,
 } = baileys;
+
 import { Boom } from "@hapi/boom";
 import fs from "fs";
 import path from "path";
 import pino from "pino";
 import db from "../models/db.js";
-console.log("Baileys exports:", Object.keys(baileys));
+
 // ======================================================
 // 🔧 SETUP DASAR
 // ======================================================
-const clients = new Map();   // deviceId → socket
-const qrCodes = new Map();   // deviceId → qr string
+const clients = new Map();
+const qrCodes = new Map();
 let io = null;
-
-// Folder tempat simpan session per device
-const AUTH_DIR = path.join(process.cwd(), "baileys_auth");
-if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
-
-// Logger minimal — ganti ke pino() kalau butuh debug penuh
 const logger = pino({ level: "silent" });
 
 // ======================================================
@@ -38,6 +34,77 @@ export function setSocketIO(socketIoInstance) {
 
 export function getWAChatClient(deviceId) {
   return clients.get(deviceId);
+}
+
+// ======================================================
+// 🗄️ DB AUTH STATE — Ganti useMultiFileAuthState dengan DB
+// ======================================================
+async function useDBAuthState(deviceId) {
+  // Helper: baca satu key dari DB
+  const readData = async (key) => {
+    try {
+      const row = await db.get(
+        `SELECT session_data FROM whatsapp_sessions WHERE device_id = ?`,
+        [`${deviceId}:${key}`]
+      );
+      if (!row) return null;
+      return JSON.parse(row.session_data, BufferJSON.reviver);
+    } catch {
+      return null;
+    }
+  };
+
+  // Helper: tulis satu key ke DB
+  const writeData = async (key, data) => {
+    const json = JSON.stringify(data, BufferJSON.replacer);
+    await db.run(
+      `INSERT INTO whatsapp_sessions (device_id, session_data)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE session_data = VALUES(session_data), updated_at = CURRENT_TIMESTAMP`,
+      [`${deviceId}:${key}`, json]
+    );
+  };
+
+  // Helper: hapus satu key dari DB
+  const removeData = async (key) => {
+    await db.run(
+      `DELETE FROM whatsapp_sessions WHERE device_id = ?`,
+      [`${deviceId}:${key}`]
+    );
+  };
+
+  // Load atau buat credentials baru
+  const creds = (await readData("creds")) || initAuthCreds();
+
+  return {
+    state: {
+      creds,
+      keys: {
+        get: async (type, ids) => {
+          const data = {};
+          for (const id of ids) {
+            const val = await readData(`${type}-${id}`);
+            if (val) data[id] = val;
+          }
+          return data;
+        },
+        set: async (data) => {
+          for (const [category, entries] of Object.entries(data)) {
+            for (const [id, value] of Object.entries(entries || {})) {
+              if (value) {
+                await writeData(`${category}-${id}`, value);
+              } else {
+                await removeData(`${category}-${id}`);
+              }
+            }
+          }
+        },
+      },
+    },
+    saveCreds: async () => {
+      await writeData("creds", creds);
+    },
+  };
 }
 
 // ======================================================
@@ -76,25 +143,13 @@ async function saveInboxMessage(deviceId, msg) {
       msg.key.fromMe
     ) return;
 
-    // ✅ Ambil nomor dari pushName/verifiedBizName atau JID
     let fromNumber = jid.split("@")[0];
-
-    // Kalau LID (angka panjang > 15 digit), coba ambil dari sumber lain
     if (fromNumber.replace(/\D/g, "").length > 15) {
-      // Coba dari notify name atau participant
       const participant = msg.key.participant?.split("@")[0];
-      if (participant) {
-        fromNumber = participant;
-      }
+      if (participant) fromNumber = participant;
     }
-
-    // Bersihkan jadi angka saja
     fromNumber = fromNumber.replace(/\D/g, "");
-
-    // Konversi 0xxx → 62xxx
-    if (fromNumber.startsWith("0")) {
-      fromNumber = "62" + fromNumber.slice(1);
-    }
+    if (fromNumber.startsWith("0")) fromNumber = "62" + fromNumber.slice(1);
 
     const body =
       msg.message?.conversation ||
@@ -114,6 +169,7 @@ async function saveInboxMessage(deviceId, msg) {
     console.error(`❌ Gagal simpan inbox:`, err.message);
   }
 }
+
 // ======================================================
 // 💾 SIMPAN PESAN KELUAR
 // ======================================================
@@ -141,7 +197,6 @@ async function saveOutboxMessage(deviceId, toNumber, body, status, msgId, schedu
 export async function createSession(deviceId) {
   console.log(`🚀 Menginisialisasi session Baileys: ${deviceId}`);
 
-  // Cegah duplikat
   if (clients.has(deviceId)) {
     console.log(`⚠️ Session ${deviceId} sudah aktif, skip.`);
     return { success: true, deviceId };
@@ -167,12 +222,9 @@ export async function createSession(deviceId) {
     console.error(`[DB ERROR] Setup device gagal:`, err.message);
   }
 
-  // Folder auth per device
-  const deviceAuthDir = path.join(AUTH_DIR, deviceId);
-  if (!fs.existsSync(deviceAuthDir)) fs.mkdirSync(deviceAuthDir, { recursive: true });
-
   const startSocket = async () => {
-    const { state, saveCreds } = await useMultiFileAuthState(deviceAuthDir);
+    // ✅ Pakai DB auth state, bukan file
+    const { state, saveCreds } = await useDBAuthState(deviceId);
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -182,19 +234,17 @@ export async function createSession(deviceId) {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, logger),
       },
-      printQRInTerminal: true,       // QR tampil di terminal juga
+      printQRInTerminal: true,
       browser: ["WA Blast", "Chrome", "1.0.0"],
-      syncFullHistory: false,        // Hemat memory — tidak perlu history lama
+      syncFullHistory: false,
       generateHighQualityLinkPreview: false,
     });
 
     clients.set(deviceId, sock);
 
-    // ── Event: connection.update ───────────────────────
     sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
-      // QR tersedia → kirim ke frontend
       if (qr) {
         console.log(`[QR] Device ${deviceId} — scan QR`);
         qrCodes.set(deviceId, qr);
@@ -209,18 +259,17 @@ export async function createSession(deviceId) {
 
         console.log(`✖️ ${deviceId} terputus. Reason: ${reason}`);
 
-        // 401 = logged out / session dihapus dari HP
         if (reason === DisconnectReason.loggedOut) {
-          console.log(`🚫 ${deviceId} logged out. Hapus session lokal.`);
+          console.log(`🚫 ${deviceId} logged out. Hapus session dari DB.`);
           await updateDeviceStatus(deviceId, "disconnected");
-          // Hapus folder auth agar scan ulang bersih
-          try {
-            fs.rmSync(deviceAuthDir, { recursive: true, force: true });
-          } catch (_) {}
-          return; // Jangan reconnect
+          // Hapus semua session keys dari DB
+          await db.run(
+            `DELETE FROM whatsapp_sessions WHERE device_id LIKE ?`,
+            [`${deviceId}:%`]
+          ).catch(() => {});
+          return;
         }
 
-        // Selain loggedOut → reconnect otomatis
         await updateDeviceStatus(deviceId, "disconnected");
         console.log(`🔄 Reconnect ${deviceId} dalam 5 detik...`);
         setTimeout(() => startSocket(), 5000);
@@ -229,15 +278,16 @@ export async function createSession(deviceId) {
       if (connection === "open") {
         console.log(`✅ ${deviceId} CONNECTED & READY`);
         qrCodes.delete(deviceId);
-        const phoneNumber = sock.user?.id?.split(":")[0] || sock.user?.id?.split("@")[0] || null;
+        const phoneNumber =
+          sock.user?.id?.split(":")[0] ||
+          sock.user?.id?.split("@")[0] ||
+          null;
         await updateDeviceStatus(deviceId, "READY", phoneNumber);
       }
     });
 
-    // ── Event: simpan credentials ─────────────────────
     sock.ev.on("creds.update", saveCreds);
 
-    // ── Event: pesan masuk ────────────────────────────
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
       if (type !== "notify") return;
       for (const msg of messages) {
@@ -282,7 +332,6 @@ export async function sendMessageService(
   scheduleId = null
 ) {
   const tempId = Date.now().toString();
-  // Format nomor: pastikan pakai @s.whatsapp.net
   const plainNumber = number.replace(/\D/g, "");
   const jid = plainNumber.includes("@") ? number : `${plainNumber}@s.whatsapp.net`;
 
@@ -292,7 +341,6 @@ export async function sendMessageService(
     const sock = clients.get(deviceId);
     if (!sock) throw new Error("Device belum aktif atau tidak terhubung.");
 
-    // Cek apakah nomor terdaftar di WA
     const [result] = await sock.onWhatsApp(plainNumber);
     if (!result?.exists) {
       console.warn(`🚫 Nomor ${plainNumber} tidak terdaftar di WhatsApp.`);
@@ -306,10 +354,11 @@ export async function sendMessageService(
     let sentMsg;
 
     if (imagePath && fs.existsSync(imagePath)) {
-      // Kirim gambar dengan caption
       const imageBuffer = fs.readFileSync(imagePath);
       const ext = path.extname(imagePath).toLowerCase();
-      const mimetype = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+      const mimetype =
+        ext === ".png" ? "image/png" :
+        ext === ".webp" ? "image/webp" : "image/jpeg";
 
       sentMsg = await sock.sendMessage(jid, {
         image: imageBuffer,
@@ -318,7 +367,6 @@ export async function sendMessageService(
       });
       console.log(`🖼️ Gambar terkirim ke ${plainNumber}`);
     } else {
-      // Kirim teks biasa
       sentMsg = await sock.sendMessage(jid, { text: message });
       console.log(`💬 Pesan teks terkirim ke ${plainNumber}`);
     }
@@ -349,12 +397,20 @@ export async function autoReconnectDevices() {
         console.log(`⏭️ Skip ${d.deviceId} — sudah aktif.`);
         continue;
       }
-      // Hanya reconnect device yang punya folder session (pernah login)
-      const deviceAuthDir = path.join(AUTH_DIR, d.deviceId);
-      if (!fs.existsSync(deviceAuthDir)) {
-        console.log(`⏭️ Skip ${d.deviceId} — belum pernah login.`);
+
+      // ✅ Cek apakah ada session di DB (bukan folder lagi)
+      const sessionRow = await db.get(
+        `SELECT id FROM whatsapp_sessions WHERE device_id = ?`,
+        [`${d.deviceId}:creds`]
+      ).catch(() => null);
+
+      if (!sessionRow) {
+        console.log(`⏭️ Skip ${d.deviceId} — belum pernah login (tidak ada session di DB).`);
+        // Reset status ke disconnected agar frontend tidak tampil READY palsu
+        await updateDeviceStatus(d.deviceId, "disconnected");
         continue;
       }
+
       try {
         await createSession(d.deviceId);
       } catch (err) {
@@ -373,35 +429,20 @@ export async function deleteSession(deviceId) {
   try {
     console.log(`⚠️ Menghapus device: ${deviceId}`);
 
-    // 1. Hapus dari DB dulu
     await db.run(`DELETE FROM Devices WHERE deviceId = ?`, [deviceId]);
-    await db.run(`DELETE FROM whatsapp_sessions WHERE device_id = ?`, [deviceId]).catch(() => {});
+    // Hapus semua session keys dari DB
+    await db.run(
+      `DELETE FROM whatsapp_sessions WHERE device_id LIKE ?`,
+      [`${deviceId}:%`]
+    ).catch(() => {});
     console.log(`✅ Data ${deviceId} dihapus dari Database.`);
 
-    // 2. Disconnect socket
     const sock = clients.get(deviceId);
     if (sock) {
-      try {
-        await sock.logout();
-      } catch (_) {}
-      try {
-        sock.end();
-      } catch (_) {}
+      try { await sock.logout(); } catch (_) {}
+      try { sock.end(); } catch (_) {}
       clients.delete(deviceId);
     }
-
-    // 3. Hapus folder auth
-    setTimeout(() => {
-      const deviceAuthDir = path.join(AUTH_DIR, deviceId);
-      if (fs.existsSync(deviceAuthDir)) {
-        try {
-          fs.rmSync(deviceAuthDir, { recursive: true, force: true });
-          console.log(`📁 Folder auth ${deviceId} dihapus.`);
-        } catch (e) {
-          console.error(`⚠️ Gagal hapus folder ${deviceId}:`, e.message);
-        }
-      }
-    }, 1000);
 
     if (io) io.emit("device-status", { deviceId, status: "DELETED" });
     return { success: true };
