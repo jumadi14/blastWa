@@ -6,14 +6,15 @@ import http from "http";
 import { Server as IOServer } from "socket.io";
 
 // === Load Routes ===
-import authRoutes from "./routes/authRoutes.js"; // 🔐 Tambahan route login
+import authRoutes from "./routes/authRoutes.js"; 
 import deviceRoutes from "./routes/deviceRoutes.js";
 import messageRoutes from "./routes/messageRoutes.js";
 import templateRoutes from "./routes/templateRoutes.js";
 import inboxRoutes from "./routes/inboxRoutes.js";
 import sentRoutes from "./routes/sentRoutes.js";
 import schedulerRoutes from "./routes/schedulerRoutes.js";
-import dashboardRoutes from "./routes/dashboardRoutes.js"; // 🔹 Dashboard route
+import dashboardRoutes from "./routes/dashboardRoutes.js"; 
+import contactRoutes from "./routes/contactRoutes.js";
 
 // === Services ===
 import {
@@ -67,7 +68,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // === API Routes ===
-app.use("/api/auth", authRoutes); // ✅ LOGIN API AKTIF
+app.use("/api/auth", authRoutes);
 app.use("/api/device", deviceRoutes);
 app.use("/api/message", messageRoutes);
 app.use("/api/template", templateRoutes);
@@ -75,6 +76,7 @@ app.use("/api/inbox", inboxRoutes);
 app.use("/api/sent", sentRoutes);
 app.use("/api/scheduler", schedulerRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/contacts", contactRoutes);
 
 // === Root Endpoint ===
 app.get("/", (req, res) => {
