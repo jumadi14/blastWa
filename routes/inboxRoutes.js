@@ -4,6 +4,8 @@ const router = express.Router();
 // Import Controllers
 import { getInbox } from "../controllers/inboxController.js";
 import { getConversation, replyMessage } from "../controllers/conversationController.js";
+import db from "../models/db.js";
+
 
 // --- DAFTAR ROUTES INBOX ---
 
