@@ -29,13 +29,13 @@ router.post("/reply/:fromNumber", replyMessage);
        }
    });
 router.get("/debug-sample", async (req, res) => {
-  2     try {
-  3         const rows = await db.all("SELECT id, deviceId, fromNumber, body, timestamp FROM Inbox ORDER BY id DESC LIMIT 5", []);
-  4         res.json({ success: true, data: rows });
-  5     } catch (err) {
-  6         res.status(500).json({ success: false, error: err.message });
-  7     }
-  8 });
+      try {
+           const rows = await db.all("SELECT id, deviceId, fromNumber, body, timestamp FROM Inbox ORDER BY id DESC LIMIT 5", []);
+           res.json({ success: true, data: rows });
+       } catch (err) {
+           res.status(500).json({ success: false, error: err.message });
+       }
+   });
 
 
 
