@@ -15,13 +15,17 @@ router.get("/conversation/:fromNumber", getConversation);
 
 // POST /api/inbox/reply/:fromNumber → Kirim Balasan
 router.post("/reply/:fromNumber", replyMessage);
+
+
 router.get("/debug-schema", async (req, res) => {
-     try {
-           const rows = await db.all("PRAGMA table_info(Inbox);");
-        res.json({ success: true, data: rows });
-       } catch (err) {
-           res.status(500).json({ success: false, error: err.message });
-       }
+       try {
+            console.log("DB object:", db); // cek di logs
+            const rows = await db.all("PRAGMA table_info(Inbox);");
+            res.json({ success: true, data: rows });
+        } catch (err) {
+            console.error("Error:", err);
+            res.status(500).json({ success: false, error: err.message });
+        }
    });
 
 
