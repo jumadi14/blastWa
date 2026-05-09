@@ -19,16 +19,16 @@ router.get("/conversation/:fromNumber", getConversation);
 router.post("/reply/:fromNumber", replyMessage);
 
 
-router.get("/debug-schema", async (req, res) => {
+ router.get("/debug-schema", async (req, res) => {
        try {
-            console.log("DB object:", db); // cek di logs
-            const rows = await db.all("PRAGMA table_info(Inbox);");
-            res.json({ success: true, data: rows });
-        } catch (err) {
-            console.error("Error:", err);
-            res.status(500).json({ success: false, error: err.message });
-        }
+           const rows = await db.all("DESCRIBE Inbox", []);
+           res.json({ success: true, data: rows });
+       } catch (err) {
+           console.error("Error:", err);
+           res.status(500).json({ success: false, error: err.message });
+       }
    });
+
 
 
 
