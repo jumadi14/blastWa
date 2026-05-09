@@ -37,6 +37,15 @@ router.get("/debug-sample", async (req, res) => {
        }
    });
 
+router.get("/debug-pesan", async (req, res) => {
+       try {
+           const rows = await db.all("DESCRIBE Messages", []);
+           res.json({ success: true, data: rows });
+       } catch (err) {
+           res.status(500).json({ success: false, error: err.message });
+       }
+   });
+
 
 
 
