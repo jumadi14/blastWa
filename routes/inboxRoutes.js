@@ -19,43 +19,6 @@ router.get("/conversation/:fromNumber", getConversation);
 router.post("/reply/:fromNumber", replyMessage);
 
 
- router.get("/debug-schema", async (req, res) => {
-       try {
-           const rows = await db.all("DESCRIBE Inbox", []);
-           res.json({ success: true, data: rows });
-       } catch (err) {
-           console.error("Error:", err);
-           res.status(500).json({ success: false, error: err.message });
-       }
-   });
-router.get("/debug-sample", async (req, res) => {
-      try {
-           const rows = await db.all("SELECT id, deviceId, fromNumber, body, timestamp FROM Inbox ORDER BY id DESC LIMIT 5", []);
-           res.json({ success: true, data: rows });
-       } catch (err) {
-           res.status(500).json({ success: false, error: err.message });
-       }
-   });
-
-router.get("/debug-pesan", async (req, res) => {
-       try {
-           const rows = await db.all("DESCRIBE Messages", []);
-           res.json({ success: true, data: rows });
-       } catch (err) {
-           res.status(500).json({ success: false, error: err.message });
-       }
-   });
-
-router.get("/debug-tables", async (req, res) => {
-      try {
-           const rows = await db.all("SHOW TABLES", []);
-           res.json({ success: true, data: rows });
-       } catch (err) {
-           res.status(500).json({ success: false, error: err.message });
-       }
-   });
-
-
 
 
 
